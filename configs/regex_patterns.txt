@@ -1,0 +1,70 @@
+# FlyGuard regex baseline (ТЗ 3.1): one Python regex per line, compiled with re.IGNORECASE; a window scores 1
+# when any pattern matches. Authored 2026-09-26 from deepset TRAIN only (data/raw/deepset/train.parquet,
+# 203 injections / 343 benign): word n-grams were ranked by precision and recall with
+# flyguard.baselines.regex.rank_ngrams, then hand-generalised; no test file was opened. This file is part of the
+# frozen config hash (flyguard.config.CONFIG_FILES) and must be committed before the first test read.
+# Train result of the 30 patterns: TPR 163/203 = 0.803, FPR 0/343 = 0.000
+# (langdetect en: TPR 95/119, FPR 0/171; de: TPR 58/69, FPR 0/150; other: TPR 10/15, FPR 0/22).
+# Each pattern is preceded by its train hits: pos = injections matched, neg = benign matched,
+# unique = injections matched by this pattern only.
+
+# 1. override verb ... instruction noun (en + de nouns)                            pos=21 neg=0 unique=1
+\b(ignore|ignoring|disregard|forget|forgetting|drop|skip|override|overrule)\b[^.!?\n]{0,60}\b(instructions?|orders?|prompts?|rules?|guidelines?|directions?|assignments?|tasks?|context|documents?|angaben|anweisung\w*|befehle?|ausführungen|regeln|vorgaben)\b
+# 2. forget / ignore everything, all, the above, previous                          pos=38 neg=0 unique=15
+\b(forget|ignore|disregard) (the |all |about |what )?(everything|all|above|previous|prior|preceding|earlier|anything|what)\b
+# 3. previous / prior / original instructions                                       pos=6 neg=0 unique=0
+\b(previous|prior|preceding|above|earlier|initial|original|former) (instructions?|tasks?|prompts?|rules?|assignments?|directions?|commands?|context)\b
+# 4. a new task / your new task                                                     pos=10 neg=0 unique=2
+\b(new|next|another|different) (task|instruction|challenge|assignment|persona)s?\b|\byour (new|next|only|real|actual|main) (task|instruction|assignment|role|persona)s?\b
+# 5. I want you to act / pretend / be ...; role-play as                             pos=7 neg=0 unique=1
+\b(i want|i need|i would like|i'd like|we want|we need) you to (act|pretend|be|behave|simulate|role ?play|play|respond|answer|write|forget|ignore|do)\b|\brole[- ]?play(ing)? as\b
+# 6. act as a / the ...                                                             pos=10 neg=0 unique=3
+\bact as (an?|the|two)\b
+# 7. pretend to be / you are ...                                                    pos=4 neg=0 unique=2
+\bpretend (to be|you are|you're|you can|that you|you have)\b
+# 8. from now on / you are now (en + de)                                            pos=5 neg=0 unique=3
+\b(from now on|you are now|now you are|ab jetzt|ab sofort|von nun an)\b
+# 9. just / only say, output, print, write, reply; repeat after me                  pos=12 neg=0 unique=2
+\b(just|only|simply) (say|output|print|write|reply)\b|\brepeat after me\b
+# 10. output verb, a separator, then a quoted string (not "answer's")                pos=13 neg=0 unique=1
+\b(say|output|print|write|display|repeat|respond|reply|answer)(\s+(with|the following|this))?(\s*:\s*|\s+)["“”'‘’]
+# 11. show / reveal the prompt; what are your instructions (en + de)                pos=9 neg=0 unique=3
+\b(show|display|reveal|repeat|copy|print|leak|zeig\w*|verrat\w*)\b[^.!?\n]{0,40}\b(prompt|prompt[- ]?te?xte?s?|system prompt|initial instructions|beginning|anfang)\b|\bwhat (are|were|is|was) your (initial |original |system |secret )?(instructions?|prompt|rules)\b
+# 12. what was written at the beginning (en + de)                                   pos=4 neg=0 unique=0
+\b(written|stand|steht) (at the beginning|am anfang)\b|\bwhat was written above\b
+# 13. and nothing else / und nichts anderes                                         pos=8 neg=0 unique=0
+\b(and|but) nothing else\b|\b(und|aber) nichts anderes\b
+# 14. do not write explanations / keine Erklärungen                                 pos=8 neg=0 unique=0
+\bdo not (write|type|give|provide|add|include) (any )?(explanations?|comments?|erklärungen)\b|\bkeine erklärungen\b
+# 15. jailbreak vocabulary: DAN mode, do anything now, pwned, without restrictions, evil AI   pos=5 neg=0 unique=2
+\b(dan|jailbreak|unrestricted|uncensored) mode\b|\bdo anything now\b|\bjailbreak\w*\b|\bpwned\b|\bwithout (any )?(restrictions|filters|censorship)\b|\b(evil|unrestricted|uncensored|unfiltered|rogue|böse) (ai|ki|assistant|chatbot|model|version)\b
+# 16. tell me / say that you hate ...; sentence-initial "state that"                pos=7 neg=0 unique=3
+\b(tell me|say|admit|include|write|confirm) that you (hate|love|are|think|want|will|can)\b|(?:^|[.!?;:]\s*)state that\b
+# 17. now / nun / jetzt + imperative (write, print, focus, forget, schreibe, folgen ...)   pos=21 neg=0 unique=6
+\b(now|nun|jetzt)[, ]+(write|print|say|output|tell|focus|concentrate|forget|ignore|answer|translate|create|generate|compose|schreib\w*|verfass\w*|vergiss|ignorier\w*|antworte|sag|zeig\w*|erstell\w*|übersetz\w*|folg\w*|bist du|sind sie|bitten wir)\b
+# 18. de: vergiss alles / alle vorherigen Anweisungen                               pos=13 neg=0 unique=6
+\b(vergiss|vergesst|vergessen sie)\b[^.!?\n]{0,30}\b(alles|alle|bisherig\w*|vorherig\w*|vorangehend\w*|vorangegangen\w*|anweisung\w*|angaben|befehle|gesagte|davor|oben|obig\w*)\b
+# 19. de: ignoriere ... Anweisungen / Befehle                                        pos=3 neg=0 unique=0
+\b(ignorier\w*|missacht\w*|übergeh\w*)\b[^.!?\n]{0,40}\b(anweisung\w*|befehle?|angaben|regeln|ausführungen|instruktionen|vorgaben|aufgaben|kontext|dokumente)\b
+# 20. de: vorherigen / bisherigen / obigen Anweisungen, Informationen                pos=16 neg=0 unique=7
+\b(vorherig|vorangehend|bisherig|obig|früher|vorangegangen|vorstehend|ursprünglich)\w* (anweisung\w*|befehle?|angaben|aufgaben|regeln|ausführungen|instruktionen|vorgaben|informationen|texte?)\b
+# 21. de: neue Aufgabe / neue Anweisungen                                            pos=12 neg=0 unique=1
+\bneue[nrs]? (aufgabe|aufgaben|anweisung|anweisungen|rolle|herausforderung|befehle?|regeln)\b
+# 22. de: ich möchte, dass Sie / du ...                                              pos=6 neg=0 unique=1
+\bich (möchte|will|wünsche),? dass (sie|du|ihr)\b
+# 23. de: schreibe ein / nur / keine ...                                             pos=14 neg=0 unique=3
+\b(schreib\w*|verfass\w*)\b[^.!?\n]{0,12}\b(ein|eine|einen|nur|keine|c\+\+|mal|jetzt|nun)\b
+# 24. persona: imagine / stell dir vor you are; du bist jetzt; tu so als; in the style of   pos=10 neg=0 unique=7
+\b(imagine|suppose|stell dir vor|stellen sie sich vor)\b,? ?(that )?(you are|you're|du bist|sie sind|du wärst|sie wären|du seist)\b|\b(du bist|sie sind) (jetzt|nun|ab jetzt|ab sofort|kein\w*)\b|\b(tu|tun sie|verhalte dich|verhalten sie sich) so,? als\b|\b(in the style of|im stil (eines|einer|des|von))\b
+# 25. pressure: stop: write ...; attention - stop; urgently need your help; or you die / I'll be sad   pos=11 neg=0 unique=8
+\bstopp?\b\W{0,3}(write|say|print|output|ignore|forget|schreib\w*|ignorier\w*|vergiss|sag)\b|\b(attention|achtung)\b\W{0,5}\bstopp?\b|\burgent(ly)? need your help\b|\bdringend (deine|ihre) hilfe\b|\b(or|otherwise|oder|sonst) (you|du|i|ich)\b[^.!?\n]{0,12}\b(die|dies|stirbst|sterbe|sad)\b
+# 26. es / fr / hr / it / ru: forget everything / all instructions                   pos=9 neg=0 unique=9
+\b(olvida\w*|oubli\w*|zaboravi\w*|dimentica\w*|забудь\w*)\b[^.!?\n]{0,30}\b(todo|todas|toutes|tout|sve|tutto|все|инструкции|instrucciones|instructions|instrukcije)\b
+# 27. answer from your own knowledge, not from the provided documents                pos=5 neg=0 unique=5
+\b(by|from|with|use) your own knowledge\b|\bnot (by|from|according to|based on) the (provided )?(articles|documents|context|text|sources)\b|\bdespite what you'?ve been told\b|\bdisregarding the (articles|documents|context)\b
+# 28. untrue / fake headline (en + de)                                               pos=5 neg=0 unique=5
+\b(untrue|false|fake|misleading|unwahre|falsche|irreführende) (headlines?|überschrift|schlagzeile)\b
+# 29. letter-spaced obfuscation ("s a y t h a t ...")                                pos=2 neg=0 unique=2
+\b(?:[a-zäöü] ){10,}[a-zäöü]\b
+# 30. say yes / no (en + de)                                                         pos=3 neg=0 unique=3
+\b(say|sag|antworte) (yes|no|ja|nein)\b

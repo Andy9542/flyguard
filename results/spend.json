@@ -1,46 +1,46 @@
 {
  "breakdown": {
   "attack:agentdojo/important_instructions": {
-   "cache_hit": 1125632.0,
-   "calls": 237.0,
-   "completion_tokens": 41782.0,
-   "cost_usd": 0.164515,
-   "prompt_tokens": 1346586.0
+   "cache_hit": 15178112.0,
+   "calls": 3511.0,
+   "completion_tokens": 617223.0,
+   "cost_usd": 2.640445,
+   "prompt_tokens": 16955736.0
   },
   "attack:agentdojo/none": {
-   "cache_hit": 291584.0,
-   "calls": 65.0,
-   "completion_tokens": 7239.0,
-   "cost_usd": 0.036652,
-   "prompt_tokens": 345138.0
+   "cache_hit": 1302016.0,
+   "calls": 367.0,
+   "completion_tokens": 49594.0,
+   "cost_usd": 0.236119,
+   "prompt_tokens": 1497046.0
   },
   "attack:agentdyn/important_instructions": {
-   "cache_hit": 52480.0,
-   "calls": 8.0,
-   "completion_tokens": 925.0,
-   "cost_usd": 0.001046,
-   "prompt_tokens": 54702.0
+   "cache_hit": 11482240.0,
+   "calls": 1783.0,
+   "completion_tokens": 207791.0,
+   "cost_usd": 0.967017,
+   "prompt_tokens": 11946465.0
   },
   "attack:agentdyn/none": {
-   "cache_hit": 38784.0,
-   "calls": 7.0,
-   "completion_tokens": 444.0,
-   "cost_usd": 0.001521,
-   "prompt_tokens": 46371.0
+   "cache_hit": 3281536.0,
+   "calls": 534.0,
+   "completion_tokens": 50745.0,
+   "cost_usd": 0.272364,
+   "prompt_tokens": 3440497.0
   },
   "benchmark:agentdojo": {
-   "cache_hit": 1417216.0,
-   "calls": 302.0,
-   "completion_tokens": 49021.0,
-   "cost_usd": 0.201168,
-   "prompt_tokens": 1691724.0
+   "cache_hit": 16480128.0,
+   "calls": 3878.0,
+   "completion_tokens": 666817.0,
+   "cost_usd": 2.876564,
+   "prompt_tokens": 18452782.0
   },
   "benchmark:agentdyn": {
-   "cache_hit": 91264.0,
-   "calls": 15.0,
-   "completion_tokens": 1369.0,
-   "cost_usd": 0.002567,
-   "prompt_tokens": 101073.0
+   "cache_hit": 14763776.0,
+   "calls": 2317.0,
+   "completion_tokens": 258536.0,
+   "cost_usd": 1.239381,
+   "prompt_tokens": 15386962.0
   },
   "model:deepseek-flash": {
    "cache_hit": 779776.0,
@@ -50,36 +50,71 @@
    "prompt_tokens": 906953.0
   },
   "model:deepseek-v4-pro": {
-   "cache_hit": 728704.0,
-   "calls": 152.0,
-   "completion_tokens": 23435.0,
-   "cost_usd": 0.166145,
-   "prompt_tokens": 885844.0
+   "cache_hit": 30464128.0,
+   "calls": 6030.0,
+   "completion_tokens": 898398.0,
+   "cost_usd": 4.078356,
+   "prompt_tokens": 32932791.0
   },
   "stream:traces": {
-   "cache_hit": 1508480.0,
-   "calls": 317.0,
-   "completion_tokens": 50390.0,
-   "cost_usd": 0.203734,
-   "prompt_tokens": 1792797.0
+   "cache_hit": 31243904.0,
+   "calls": 6195.0,
+   "completion_tokens": 925353.0,
+   "cost_usd": 4.115946,
+   "prompt_tokens": 33839744.0
+  },
+  "suite:agentdojo/banking": {
+   "cache_hit": 1008256.0,
+   "calls": 512.0,
+   "completion_tokens": 73833.0,
+   "cost_usd": 0.213965,
+   "prompt_tokens": 1077338.0
+  },
+  "suite:agentdojo/slack": {
+   "cache_hit": 1154688.0,
+   "calls": 644.0,
+   "completion_tokens": 94064.0,
+   "cost_usd": 0.264698,
+   "prompt_tokens": 1235063.0
+  },
+  "suite:agentdojo/travel": {
+   "cache_hit": 3261824.0,
+   "calls": 674.0,
+   "completion_tokens": 148883.0,
+   "cost_usd": 0.488659,
+   "prompt_tokens": 3446841.0
   },
   "suite:agentdojo/workspace": {
-   "cache_hit": 1417216.0,
-   "calls": 302.0,
-   "completion_tokens": 49021.0,
-   "cost_usd": 0.201168,
-   "prompt_tokens": 1691724.0
+   "cache_hit": 11055360.0,
+   "calls": 2048.0,
+   "completion_tokens": 350037.0,
+   "cost_usd": 1.909242,
+   "prompt_tokens": 12693540.0
+  },
+  "suite:agentdyn/dailylife": {
+   "cache_hit": 5011200.0,
+   "calls": 872.0,
+   "completion_tokens": 100655.0,
+   "cost_usd": 0.435754,
+   "prompt_tokens": 5202429.0
+  },
+  "suite:agentdyn/github": {
+   "cache_hit": 5372032.0,
+   "calls": 827.0,
+   "completion_tokens": 91034.0,
+   "cost_usd": 0.471693,
+   "prompt_tokens": 5634549.0
   },
   "suite:agentdyn/shopping": {
-   "cache_hit": 91264.0,
-   "calls": 15.0,
-   "completion_tokens": 1369.0,
-   "cost_usd": 0.002567,
-   "prompt_tokens": 101073.0
+   "cache_hit": 4380544.0,
+   "calls": 618.0,
+   "completion_tokens": 66847.0,
+   "cost_usd": 0.331934,
+   "prompt_tokens": 4549984.0
   }
  },
  "budget_usd": 7.0,
- "n_calls": 317,
+ "n_calls": 6195,
  "pilot": {
   "chosen_by_rule": false,
   "chosen_model": "deepseek-v4-pro",
@@ -143,7 +178,7 @@
    "spent_usd": 0.20373
   }
  },
- "remaining_usd": 6.796266,
- "spent_usd": 0.203734,
+ "remaining_usd": 2.884054,
+ "spent_usd": 4.115946,
  "within_budget": true
 }

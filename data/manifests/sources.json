@@ -2,252 +2,252 @@
  "files": [
   {
    "bytes": 40323,
-   "fetched": "2026-09-26T07:58:33Z",
+   "fetched": "2026-09-26T08:37:48Z",
    "path": "data/raw/deepset/train.parquet",
    "sha256": "2e10bc7ab30f542c97e4e83e2a5683000b5057d25ec10908784c631d44124c04",
    "url": "https://huggingface.co/datasets/deepset/prompt-injections/resolve/main/data/train-00000-of-00001-9564e8b05b4757ab.parquet"
   },
   {
    "bytes": 10892,
-   "fetched": "2026-09-26T07:58:33Z",
+   "fetched": "2026-09-26T08:37:48Z",
    "path": "data/raw/deepset/test.parquet",
    "sha256": "39ac797cabc157eeed58435a08593b2952bb6cb16fc394a2d383f447cc7b246e",
    "url": "https://huggingface.co/datasets/deepset/prompt-injections/resolve/main/data/test-00000-of-00001-701d16158af87368.parquet"
   },
   {
    "bytes": 31586,
-   "fetched": "2026-09-26T07:58:33Z",
+   "fetched": "2026-09-26T08:37:48Z",
    "path": "data/raw/bipia/email/train.jsonl",
    "sha256": "82207193cb8ce06713eeb7c33ca0716446613512e2ad9303b302ba14d425ddd4",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/email/train.jsonl"
   },
   {
    "bytes": 30334,
-   "fetched": "2026-09-26T07:58:33Z",
+   "fetched": "2026-09-26T08:37:48Z",
    "path": "data/raw/bipia/email/test.jsonl",
    "sha256": "217b403faaa1d0cb12c24892bea39f4a0b9e2819919ac7e2b902006e28278cdb",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/email/test.jsonl"
   },
   {
    "bytes": 1638481,
-   "fetched": "2026-09-26T07:58:33Z",
+   "fetched": "2026-09-26T08:37:48Z",
    "path": "data/raw/bipia/table/train.jsonl",
    "sha256": "ae1c3ff25733fb3ff1a35bda3009716f4d25a17ae6833c73521be0411d576494",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/table/train.jsonl"
   },
   {
    "bytes": 183302,
-   "fetched": "2026-09-26T07:58:33Z",
+   "fetched": "2026-09-26T08:37:48Z",
    "path": "data/raw/bipia/table/test.jsonl",
    "sha256": "3d5eaab192b80bada762e3cd7655583a14e5888ba8b845a01f0434e4ccc4291e",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/table/test.jsonl"
   },
   {
    "bytes": 125926,
-   "fetched": "2026-09-26T07:58:33Z",
+   "fetched": "2026-09-26T08:37:48Z",
    "path": "data/raw/bipia/code/train.jsonl",
    "sha256": "5e6879b621a5cefe265a5b41b7ed0be632536f658f6097baf85a28b9abcb3115",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/code/train.jsonl"
   },
   {
    "bytes": 100451,
-   "fetched": "2026-09-26T07:58:33Z",
+   "fetched": "2026-09-26T08:37:49Z",
    "path": "data/raw/bipia/code/test.jsonl",
    "sha256": "ed40b84f541352fb45753032a80750922de8d5e0b70997924df3d04cf942e058",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/code/test.jsonl"
   },
   {
    "bytes": 5999,
-   "fetched": "2026-09-26T07:58:33Z",
+   "fetched": "2026-09-26T08:37:49Z",
    "path": "data/raw/bipia/text_attack_train.json",
    "sha256": "63f95d3e67eac4178cdabdbdaf192cd05f2b6ed0702b578f1d30d556e5155670",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/text_attack_train.json"
   },
   {
    "bytes": 6322,
-   "fetched": "2026-09-26T07:58:33Z",
+   "fetched": "2026-09-26T08:37:49Z",
    "path": "data/raw/bipia/text_attack_test.json",
    "sha256": "75750e7b4e8b34e8f9d88d89b357aeaaf02bd07f9e493ccd37eda74a0cd7c7f8",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/text_attack_test.json"
   },
   {
    "bytes": 16343,
-   "fetched": "2026-09-26T07:58:33Z",
+   "fetched": "2026-09-26T08:37:49Z",
    "path": "data/raw/bipia/code_attack_train.json",
    "sha256": "fe515080b6da2b5c0b67ca7ba2a3b3c2ce57c48f45733c475ebc813cba118484",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/code_attack_train.json"
   },
   {
    "bytes": 16356,
-   "fetched": "2026-09-26T07:58:33Z",
+   "fetched": "2026-09-26T08:37:49Z",
    "path": "data/raw/bipia/code_attack_test.json",
    "sha256": "892545c5aaec0645b1ded65dc7816b3d70e9ef4eadcba2301a7a3db93676b6e0",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/code_attack_test.json"
   },
   {
    "bytes": 7123,
-   "fetched": "2026-09-26T07:58:33Z",
+   "fetched": "2026-09-26T08:37:49Z",
    "path": "data/raw/bipia/qa/index.json",
    "sha256": "515ebe056b6e63d517d03f30c7b9f81026dbde49baf04fa8e6c2b20dba90bc97",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/qa/index.json"
   },
   {
    "bytes": 91,
-   "fetched": "2026-09-26T07:58:34Z",
+   "fetched": "2026-09-26T08:37:49Z",
    "path": "data/raw/bipia/qa/md5.txt",
    "sha256": "598d3376078280557a15584d3e3eedfcd21ea62ca6e0e65413320411f5e96be1",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/qa/md5.txt"
   },
   {
    "bytes": 7360,
-   "fetched": "2026-09-26T07:58:34Z",
+   "fetched": "2026-09-26T08:37:49Z",
    "path": "data/raw/bipia/abstract/index.json",
    "sha256": "f1d03600683089a7d58d900c32d91a27238eda2220eef69da9850a99e11cf365",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/abstract/index.json"
   },
   {
    "bytes": 91,
-   "fetched": "2026-09-26T07:58:34Z",
+   "fetched": "2026-09-26T08:37:49Z",
    "path": "data/raw/bipia/abstract/md5.txt",
    "sha256": "6f0cecc105c95b4eb9d943f236d1f5f2ea01455b41194d32cf9de4817aa6e58f",
    "url": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/abstract/md5.txt"
   },
   {
    "bytes": 26117,
-   "fetched": "2026-09-26T07:58:34Z",
+   "fetched": "2026-09-26T08:37:49Z",
    "path": "data/raw/notinject/NotInject_one.json",
    "sha256": "69b535596d95102424e9c5946944feb4f2d596687eb8213f2ecad75478e5ffdd",
    "url": "https://raw.githubusercontent.com/leolee99/PIGuard/main/datasets/NotInject_one.json"
   },
   {
    "bytes": 29902,
-   "fetched": "2026-09-26T07:58:34Z",
+   "fetched": "2026-09-26T08:37:50Z",
    "path": "data/raw/notinject/NotInject_two.json",
    "sha256": "6043d94e75b48d8e7682d25dc79eaf45359e1e561ce520e3b8fd5625a91060c6",
    "url": "https://raw.githubusercontent.com/leolee99/PIGuard/main/datasets/NotInject_two.json"
   },
   {
    "bytes": 35765,
-   "fetched": "2026-09-26T07:58:34Z",
+   "fetched": "2026-09-26T08:37:50Z",
    "path": "data/raw/notinject/NotInject_three.json",
    "sha256": "ef01eff0d761d2e34571b3fdbcec08c30cd93efe8d0e1a2eb5c2baeb1873b070",
    "url": "https://raw.githubusercontent.com/leolee99/PIGuard/main/datasets/NotInject_three.json"
   },
   {
    "bytes": 43398735,
-   "fetched": "2026-09-26T07:58:34Z",
+   "fetched": "2026-09-26T08:37:50Z",
    "path": "data/raw/piguard_train/train.json",
    "sha256": "806ded8bd85782a53d34faffe4fd92b3f2e0b3b431c43578ce77faea6b9ed911",
    "url": "https://raw.githubusercontent.com/leolee99/PIGuard/main/datasets/train.json"
   },
   {
    "bytes": 994,
-   "fetched": "2026-09-26T07:58:34Z",
+   "fetched": "2026-09-26T08:37:50Z",
    "path": "data/raw/models/protectai_v2/config.json",
    "sha256": "05079f4735092040b780d459027afab413faa6eeb66a548571a58832304b60bb",
    "url": "https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/config.json"
   },
   {
    "bytes": 737719272,
-   "fetched": "2026-09-26T07:58:35Z",
+   "fetched": "2026-09-26T08:37:52Z",
    "path": "data/raw/models/protectai_v2/model.safetensors",
    "sha256": "6521cb8d0ac08148c81464899c424e6148fcc62befa371089fa4061d8b6e0424",
    "url": "https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/model.safetensors"
   },
   {
    "bytes": 8656744,
-   "fetched": "2026-09-26T07:58:35Z",
+   "fetched": "2026-09-26T08:37:52Z",
    "path": "data/raw/models/protectai_v2/tokenizer.json",
    "sha256": "f0a66ad0d735d8dca9ecac4ff50fcdef4bb6adbadd2941a926844844d2c2059b",
    "url": "https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/tokenizer.json"
   },
   {
    "bytes": 1284,
-   "fetched": "2026-09-26T07:58:35Z",
+   "fetched": "2026-09-26T08:37:52Z",
    "path": "data/raw/models/protectai_v2/tokenizer_config.json",
    "sha256": "557b3d33d3f41b81ad769244e506549e98a1857d41dd58160aacd4d98d710b5a",
    "url": "https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/tokenizer_config.json"
   },
   {
    "bytes": 286,
-   "fetched": "2026-09-26T07:58:35Z",
+   "fetched": "2026-09-26T08:37:52Z",
    "path": "data/raw/models/protectai_v2/special_tokens_map.json",
    "sha256": "9463f61e1b109a8eb4688b829260d7c6b1e6dff04c98ff7269bb89e2b92369b9",
    "url": "https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/special_tokens_map.json"
   },
   {
    "bytes": 23,
-   "fetched": "2026-09-26T07:58:35Z",
+   "fetched": "2026-09-26T08:37:52Z",
    "path": "data/raw/models/protectai_v2/added_tokens.json",
    "sha256": "dc046d04c9b0ada7ae6f1dc89c465801799acdf0c9a6aab8c15a1b2d5ca4e91f",
    "url": "https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/added_tokens.json"
   },
   {
    "bytes": 2464616,
-   "fetched": "2026-09-26T07:58:35Z",
+   "fetched": "2026-09-26T08:37:52Z",
    "path": "data/raw/models/protectai_v2/spm.model",
    "sha256": "c679fbf93643d19aab7ee10c0b99e460bdbc02fedf34b92b05af343b4af586fd",
    "url": "https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/spm.model"
   },
   {
    "bytes": 1062,
-   "fetched": "2026-09-26T07:58:35Z",
+   "fetched": "2026-09-26T08:37:52Z",
    "path": "data/raw/models/piguard/config.json",
    "sha256": "f7ab538357be6b11364e4ad225595fe2a96b64f69506387a04e3cae699bac1d0",
    "url": "https://huggingface.co/leolee99/PIGuard/resolve/main/config.json"
   },
   {
    "bytes": 737719272,
-   "fetched": "2026-09-26T08:01:43Z",
+   "fetched": "2026-09-26T08:37:53Z",
    "path": "data/raw/models/piguard/model.safetensors",
    "sha256": "f90b9806de93b6286cda517300d4b55e5ce2e5ccbf8339dc59be21ca0dd9a25e",
    "url": "https://huggingface.co/leolee99/PIGuard/resolve/main/model.safetensors"
   },
   {
    "bytes": 8656624,
-   "fetched": "2026-09-26T08:01:49Z",
+   "fetched": "2026-09-26T08:37:53Z",
    "path": "data/raw/models/piguard/tokenizer.json",
    "sha256": "5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964",
    "url": "https://huggingface.co/leolee99/PIGuard/resolve/main/tokenizer.json"
   },
   {
    "bytes": 1284,
-   "fetched": "2026-09-26T08:01:51Z",
+   "fetched": "2026-09-26T08:37:53Z",
    "path": "data/raw/models/piguard/tokenizer_config.json",
    "sha256": "557b3d33d3f41b81ad769244e506549e98a1857d41dd58160aacd4d98d710b5a",
    "url": "https://huggingface.co/leolee99/PIGuard/resolve/main/tokenizer_config.json"
   },
   {
    "bytes": 286,
-   "fetched": "2026-09-26T08:01:52Z",
+   "fetched": "2026-09-26T08:37:53Z",
    "path": "data/raw/models/piguard/special_tokens_map.json",
    "sha256": "9463f61e1b109a8eb4688b829260d7c6b1e6dff04c98ff7269bb89e2b92369b9",
    "url": "https://huggingface.co/leolee99/PIGuard/resolve/main/special_tokens_map.json"
   },
   {
    "bytes": 23,
-   "fetched": "2026-09-26T08:01:54Z",
+   "fetched": "2026-09-26T08:37:54Z",
    "path": "data/raw/models/piguard/added_tokens.json",
    "sha256": "dc046d04c9b0ada7ae6f1dc89c465801799acdf0c9a6aab8c15a1b2d5ca4e91f",
    "url": "https://huggingface.co/leolee99/PIGuard/resolve/main/added_tokens.json"
   },
   {
    "bytes": 132,
-   "fetched": "2026-09-26T08:01:58Z",
+   "fetched": "2026-09-26T08:37:54Z",
    "path": "data/raw/models/piguard/spm.model",
    "sha256": "f2d17af198445dafd6bd0a85951e2415b1666baa9604abae9b199306fad7486e",
    "url": "https://huggingface.co/leolee99/PIGuard/resolve/main/spm.model"
   },
   {
    "bytes": 973,
-   "fetched": "2026-09-26T08:02:00Z",
+   "fetched": "2026-09-26T08:37:54Z",
    "path": "data/raw/models/piguard/modeling_piguard.py",
    "sha256": "5be806a223cf20c418171a409726110c02a7377d75f22ee6f80d7c72ac0fa529",
    "url": "https://huggingface.co/leolee99/PIGuard/resolve/main/modeling_piguard.py"
   },
   {
    "bytes": 35,
-   "fetched": "2026-09-26T08:02:01Z",
+   "fetched": "2026-09-26T08:37:54Z",
    "path": "data/raw/models/piguard/__init__.py",
    "sha256": "aa4ed85a01d76e54db092e4e9b472c952130af70f93877dcde2abf2b86cfe774",
    "url": "https://huggingface.co/leolee99/PIGuard/resolve/main/__init__.py"
@@ -262,12 +262,6 @@
    "bytes": 43282834,
    "path": "data/ext/FlyHash-Connectome/data/raw/body-neurotransmitters-male-cns-v1.0.feather",
    "sha256": "95c9289220663abeb3409f3ad9e5a7f8a53f8093f5139d15502cd08da8879621",
-   "url": "flypath build (ssenge/FlyHash-Connectome@91caf384)"
-  },
-  {
-   "bytes": 1051241946,
-   "path": "data/ext/FlyHash-Connectome/data/raw/connectome-weights-male-cns-v1.0-minconf-0.5.feather",
-   "sha256": "e35da783d1c686b2b58b3b87cd6a403ae43bfcfba8bff28e08ef752c1a56afc1",
    "url": "flypath build (ssenge/FlyHash-Connectome@91caf384)"
   },
   {
@@ -301,7 +295,7 @@
    "url": "flypath build (ssenge/FlyHash-Connectome@91caf384)"
   }
  ],
- "generated": "2026-09-26T08:07:50Z",
+ "generated": "2026-09-26T08:40:24Z",
  "pins": {
   "agentdojo": {
    "benchmark_version": "v1.2.2",
