@@ -1,0 +1,5 @@
+name: E2
+title: Кривые обучения
+shots: [1, 10, 100, full]
+subsamples_per_point: 10
+detectors: [real_fly_bloom, flyhash_bloom, real_fly_linear, tfidf_lr, knn1, centroid]

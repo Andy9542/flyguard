@@ -1,0 +1,5 @@
+name: E1
+title: Основной кросс-датасетный
+train_labels: deepset_train
+test_sources: [deep, bipia, dojo, dyn, para, notinject]
+detectors: [regex, tfidf_lr, knn1, knn5, centroid, lr_svd, real_fly_bloom, real_fly_linear, flyhash_bloom, flyhash_linear, protectai_v2, piguard, prompt_guard_2]

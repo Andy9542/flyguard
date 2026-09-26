@@ -1,0 +1,188 @@
+2026-09-26T07:40:05Z	pypi.org	GET	https://pypi.org/simple/	resolve requirements.lock (uv pip compile)
+2026-09-26T07:40:05Z	download.pytorch.org	GET	https://download.pytorch.org/whl/cpu	resolve torch CPU wheel
+2026-09-26T07:40:12Z	pypi.org	GET	https://pypi.org/simple/	install requirements.lock into .venv
+2026-09-26T07:40:12Z	files.pythonhosted.org	GET	https://files.pythonhosted.org/	download wheels for .venv
+2026-09-26T07:40:12Z	download.pytorch.org	GET	https://download.pytorch.org/whl/cpu	download torch CPU wheel
+2026-09-26T07:45:20Z	huggingface.co	GET	https://huggingface.co/datasets/deepset/prompt-injections/resolve/main/data/train-00000-of-00001-9564e8b05b4757ab.parquet	deepset train
+2026-09-26T07:45:20Z	pypi.org	GET	https://pypi.org/simple/	install requirements.lock into .venv
+2026-09-26T07:45:20Z	files.pythonhosted.org	GET	https://files.pythonhosted.org/	download wheels for .venv
+2026-09-26T07:45:20Z	download.pytorch.org	GET	https://download.pytorch.org/whl/cpu	download torch CPU wheel
+2026-09-26T07:45:24Z	huggingface.co	GET	https://huggingface.co/datasets/deepset/prompt-injections/resolve/main/data/test-00000-of-00001-701d16158af87368.parquet	deepset test
+2026-09-26T07:45:28Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/email/train.jsonl	BIPIA email train contexts
+2026-09-26T07:45:30Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/email/test.jsonl	BIPIA email test contexts
+2026-09-26T07:45:30Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/table/train.jsonl	BIPIA table train contexts
+2026-09-26T07:45:47Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/table/test.jsonl	BIPIA table test contexts
+2026-09-26T07:46:05Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/code/train.jsonl	BIPIA code train contexts
+2026-09-26T07:46:08Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/code/test.jsonl	BIPIA code test contexts
+2026-09-26T07:46:13Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/text_attack_train.json	BIPIA attacks text_attack_train
+2026-09-26T07:46:15Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/text_attack_test.json	BIPIA attacks text_attack_test
+2026-09-26T07:46:18Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/code_attack_train.json	BIPIA attacks code_attack_train
+2026-09-26T07:46:21Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/code_attack_test.json	BIPIA attacks code_attack_test
+2026-09-26T07:46:24Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/qa/index.json	BIPIA qa sample index
+2026-09-26T07:46:25Z	github.com	GIT	https://github.com/SaFo-Lab/AgentDyn.git	clone AgentDyn (blobless), pinned commit 5353cf7615b135cace8d07c8f12dac53a16b6db3
+2026-09-26T07:46:25Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/qa/md5.txt	BIPIA qa md5
+2026-09-26T07:46:25Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/abstract/index.json	BIPIA abstract sample index
+2026-09-26T07:46:26Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/abstract/md5.txt	BIPIA abstract md5
+2026-09-26T07:46:26Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/leolee99/PIGuard/main/datasets/NotInject_one.json	NotInject subset NotInject_one
+2026-09-26T07:46:27Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/leolee99/PIGuard/main/datasets/NotInject_two.json	NotInject subset NotInject_two
+2026-09-26T07:46:27Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/leolee99/PIGuard/main/datasets/NotInject_three.json	NotInject subset NotInject_three
+2026-09-26T07:46:28Z	raw.githubusercontent.com	GET	https://raw.githubusercontent.com/leolee99/PIGuard/main/datasets/train.json	PIGuard open training set (contamination audit)
+2026-09-26T07:46:39Z	pypi.org	GET	https://pypi.org/simple/	install AgentDyn and its dependencies into .venv-agentdyn
+2026-09-26T07:46:43Z	huggingface.co	GET	https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/config.json	model protectai/deberta-v3-base-prompt-injection-v2: config.json
+2026-09-26T07:46:45Z	huggingface.co	GET	https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/model.safetensors	model protectai/deberta-v3-base-prompt-injection-v2: model.safetensors
+2026-09-26T07:47:02Z	github.com	GIT	https://github.com/ssenge/FlyHash-Connectome.git	clone FlyHash-Connectome, pinned commit 91caf384abe291814d58e9563aa9713386d65a25
+2026-09-26T07:47:07Z	pypi.org	GET	https://pypi.org/simple/	install FlyHash-Connectome dependencies into .venv-flypath
+2026-09-26T07:49:06Z	huggingface.co	GET	https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/tokenizer.json	model protectai/deberta-v3-base-prompt-injection-v2: tokenizer.json
+2026-09-26T07:49:11Z	huggingface.co	GET	https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/tokenizer_config.json	model protectai/deberta-v3-base-prompt-injection-v2: tokenizer_config.json
+2026-09-26T07:49:12Z	huggingface.co	GET	https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/special_tokens_map.json	model protectai/deberta-v3-base-prompt-injection-v2: special_tokens_map.json
+2026-09-26T07:49:15Z	huggingface.co	GET	https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/added_tokens.json	model protectai/deberta-v3-base-prompt-injection-v2: added_tokens.json
+2026-09-26T07:49:17Z	huggingface.co	GET	https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2/resolve/main/spm.model	model protectai/deberta-v3-base-prompt-injection-v2: spm.model
+2026-09-26T07:49:21Z	huggingface.co	GET	https://huggingface.co/leolee99/PIGuard/resolve/main/config.json	model leolee99/PIGuard: config.json
+2026-09-26T07:49:23Z	huggingface.co	GET	https://huggingface.co/leolee99/PIGuard/resolve/main/model.safetensors	model leolee99/PIGuard: model.safetensors
+2026-09-26T07:53:42Z	huggingface.co	GET	https://huggingface.co/leolee99/PIGuard/resolve/main/model.safetensors	model leolee99/PIGuard: model.safetensors
+2026-09-26T07:55:49Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_0/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:55:51Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_0/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:56:50Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	availability check of deepseek-flash (pilot)
+2026-09-26T07:56:57Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_23/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:56:59Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_23/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:00Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_16/injection_task_5); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:02Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_16/injection_task_5); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:03Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_1/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:05Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_1/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:05Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_27/injection_task_0); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:07Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_27/injection_task_0); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:08Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_11/injection_task_3); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:09Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_11/injection_task_3); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:10Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_0/injection_task_11); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:11Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_0/injection_task_11); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:13Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_29/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:15Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_29/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:17Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_29/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:18Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_18/injection_task_0); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:20Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_18/injection_task_0); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:21Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_18/injection_task_0); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:23Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_18/injection_task_0); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:24Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_12/injection_task_7); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:25Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_12/injection_task_7); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:26Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_12/injection_task_7); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:27Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_36/injection_task_3); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:29Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_36/injection_task_3); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:31Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_36/injection_task_3); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:32Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_30/injection_task_6); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:33Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_30/injection_task_6); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:35Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_30/injection_task_6); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:36Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_15/injection_task_9); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:38Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_15/injection_task_9); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:39Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_15/injection_task_9); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:41Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_5/injection_task_10); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:42Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_5/injection_task_10); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:43Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_17/injection_task_13); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:45Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_17/injection_task_13); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:45Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_18/injection_task_10); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:47Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_18/injection_task_10); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:49Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_18/injection_task_10); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:50Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_2/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:51Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_2/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:52Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_12/injection_task_2); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:54Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_12/injection_task_2); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:55Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_12/injection_task_2); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:56Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_7/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:57:58Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_7/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:00Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_7/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:01Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_7/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:02Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_7/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:03Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_7/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:05Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_30/injection_task_9); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:06Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_30/injection_task_9); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:07Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_30/injection_task_9); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:09Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_9/injection_task_5); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:10Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_9/injection_task_5); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:12Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_9/injection_task_5); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:13Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_11/injection_task_11); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:15Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_11/injection_task_11); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:16Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_8/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:17Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_8/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:19Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_8/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:20Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_29/injection_task_0); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:22Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_29/injection_task_0); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:24Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_29/injection_task_0); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:25Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_15/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:27Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_15/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:28Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_15/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:29Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_6/injection_task_6); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:31Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_6/injection_task_6); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:32Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_6/injection_task_6); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:34Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_26/injection_task_10); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:35Z	huggingface.co	GET	https://huggingface.co/leolee99/PIGuard/resolve/main/model.safetensors	model leolee99/PIGuard: model.safetensors
+2026-09-26T07:58:37Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_26/injection_task_10); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:38Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_34/injection_task_5); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:40Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_34/injection_task_5); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:42Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_34/injection_task_5); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:44Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_39/injection_task_11); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:47Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_39/injection_task_11); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:49Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_21/injection_task_0); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:52Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_21/injection_task_0); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:54Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_21/injection_task_0); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:56Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_22/injection_task_11); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:58:59Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_22/injection_task_11); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:00Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_22/injection_task_4); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:03Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_22/injection_task_4); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:04Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_8/injection_task_10); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:06Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_8/injection_task_10); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:08Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_8/injection_task_10); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:10Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_38/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:12Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_38/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:14Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_38/injection_task_1); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:16Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_39/injection_task_7); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:19Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_39/injection_task_7); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:20Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_5/injection_task_11); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:22Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_5/injection_task_11); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:24Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_25/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:25Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_25/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:28Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_25/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:30Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_25/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:32Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_25/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:34Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_25/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:36Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_25/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:38Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_25/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:40Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_25/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:42Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_25/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:45Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_25/injection_task_12); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:46Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_34/injection_task_7); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:49Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_34/injection_task_7); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:50Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_34/injection_task_7); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:53Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_18/injection_task_6); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:55Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_18/injection_task_6); stream 1 of 2 permitted outgoing flows
+2026-09-26T07:59:58Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_18/injection_task_6); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:00Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_18/injection_task_6); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:02Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_19/injection_task_8); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:05Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_19/injection_task_8); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:08Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_19/injection_task_8); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:09Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_19/injection_task_8); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:12Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/important_instructions/user_task_19/injection_task_8); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:20Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_2/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:21Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_2/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:23Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_7/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:24Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_7/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:26Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_7/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:27Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_10/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:29Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_10/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:30Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_10/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:32Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_11/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:33Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_11/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:34Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_12/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:36Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_12/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:38Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_12/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:40Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_19/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:42Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_19/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:45Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_19/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:48Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_19/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:49Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_20/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:52Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_20/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:53Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_20/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:54Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_34/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:55Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_34/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:57Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_34/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:58Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_35/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:00:59Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_35/-); stream 1 of 2 permitted outgoing flows
+2026-09-26T08:01:01Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	agent model call (agentdojo workspace/none/user_task_35/-); stream 1 of 2 permitted outgoing flows

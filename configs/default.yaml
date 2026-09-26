@@ -1,0 +1,94 @@
+# configs/default.yaml — fly, windows, thresholds and seeds (ТЗ stages 1-4). Frozen before the final run.
+seeds:
+  global: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  children: [nose, svd, perm, projection, subsample, curveball, bootstrap, paraphrase]   # SeedSequence spawn order
+windows: {size: 256, stride: 192, min_span_chars: 64}
+normalize: {unicode: NFKC, collapse_whitespace: true, keep_original: true}
+language: {library: langdetect, seed: 0, main: en}
+nose:
+  ngram_sizes: [3, 4, 5]
+  hash: xxhash64
+  n16k: {bins: 16384, transform: log1p, norm: sum}
+  n51_svd: {rank: 51, standardize: true, permute_to_glomeruli: true}
+  n51_hash: {bins: 51, norm: sum}
+  center_on_unlabeled: true
+expansion:
+  malecns:
+    source: flypath_build             # ssenge/FlyHash-Connectome `python -m flypath build`
+    side: R
+    min_weight: 1                     # every reconstructed connection, as in FlyHash-Connectome (51 x 1886)
+    indegree_check: [4, 8]
+    reference_kc: 1838
+    full_kc: 1886
+  malecns_reserve: {minconf: 0.5, min_weight: 5}   # Feather build if flypath build is unavailable
+  curveball: {n_null: 200, swaps_per_edge: 5}
+  flyhash: {fan_in: 6, expansions: [20, 40], primary_expansion: 20}
+inhibition: {k_frac: 0.05, tie: lowest_index, e6_k_frac: [0.025, 0.10]}
+readout:
+  bloom: {gammas: [0.0, 0.5, 0.9, 0.99], balance: subsample_to_minority, e6_normalized: true}
+  linear: {C_grid: [0.01, 0.1, 1.0, 10.0, 100.0], penalty: l2, class_weight: balanced}
+thresholds:
+  fpr_targets: {primary: 0.01, fallback: 0.05}
+  pool_min_docs: {fpr_1pct: 2000, fpr_5pct: 500}
+  tau_tpr: {primary_source: deep, secondary_source: dojo, tpr: 0.90, e6_tpr: 0.80}
+baselines:
+  regex_file: configs/regex_patterns.txt
+  tfidf: {C_grid: [0.01, 0.1, 1.0, 10.0, 100.0]}
+  knn: {ks: [1, 5], metric: cosine}
+  centroid: true
+  lr_svd: {C_grid: [0.01, 0.1, 1.0, 10.0, 100.0]}
+  transformers:
+    comparator: protectai_v2          # primary comparator, assigned before any test read (ТЗ 3.2)
+    batch_size: 32
+    cache_dir: data/processed/scores_cache
+    models:
+      protectai_v2: {path: data/raw/models/protectai_v2, max_length: 512, positive_label: INJECTION}
+      piguard: {path: data/raw/models/piguard, max_length: 512, positive_label: injection, trust_remote_code: true}
+      prompt_guard_2: {path: data/raw/models/prompt_guard_2, max_length: 512, positive_label: LABEL_1, optional: true}
+stats:
+  bootstrap: {n: 1000, alpha: 0.05, method: percentile, cluster_key: cluster_id}
+  tost: {ci: 0.90, delta_rel: 0.05}
+  holm: true
+  randomization: {n_null: 200, two_sided: true}
+  h2_margin_pp: 10
+  preconditions: {h2_val_auc_deep: 0.75, h3_val_macro_auc: 0.75}
+dedup: {shingle: 5, minhash_perm: 128, jaccard: 0.8}
+splits:
+  val_fraction: 0.2
+  agentdojo_val_rule: {hash: crc32, mod: 5, rem: 0}
+  contract: {hash: crc32, mod: 3, rem: 2, test_attack: important_instructions, val_fraction: 0.2}
+  bipia: {val_fraction: 0.2}
+pools: {target_min_docs: 2000}
+paraphrase:
+  bases: {agentdojo_templates: [important_instructions, tool_knowledge, injecagent, ignore_previous],
+          deepset_test_injections: true, deepset_test_benign: true}
+  per_generator_call: {shallow: 2, deep: 2, benign_total: 4}
+  filters: {language: en, length_ratio: [0.5, 2.0], jaccard_max: 0.5, shallow_range: [0.3, 0.5], deep_max: 0.3,
+            dedup_jaccard: 0.8, shingle: 5}
+  max_accepted_per_base: 5
+  banned_words_file: configs/prompts/banned_words.txt
+  chi2_extra_words: 30
+  prompts:
+    generator_injection: configs/prompts/generator_injection.txt
+    generator_benign: configs/prompts/generator_benign.txt
+    judge_injection: configs/prompts/judge_injection.txt
+    judge_benign: configs/prompts/judge_benign.txt
+  max_tokens: 4096
+traces:
+  agentdojo: {suites: [workspace, travel, banking, slack],
+              attacks: [important_instructions, tool_knowledge, injecagent, ignore_previous],
+              benchmark_version: v1.2.2, max_workers: 8, venv: .venv}
+  agentdyn:  {suites: [shopping, github, dailylife], attacks: [important_instructions],
+              benchmark_version: v1.2.2, max_workers: 4, venv: .venv-agentdyn}
+  priority:                           # ТЗ 1.5, cut from the tail when the budget projection is exceeded
+    - {benchmark: agentdojo, attack: important_instructions, clean: true}
+    - {benchmark: agentdyn,  attack: important_instructions, clean: true}
+    - {benchmark: agentdojo, attack: tool_knowledge}
+    - {benchmark: agentdojo, attack: injecagent}
+    - {benchmark: agentdojo, attack: ignore_previous}
+  pilot: {suite: workspace, attack: important_instructions, n_attacked: 40, n_clean: 10,
+          asr_range: [0.20, 0.70], min_utility: 0.40}
+  temperature: 0.0
+  logdir: data/traces
+  spend_dir: results/spend
+smoke: {seeds: 1, n_null: 20, docs_per_source: 200, bootstrap: 100, episodes: 20, paraphrase_bases: 10}

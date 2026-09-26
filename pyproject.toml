@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flyguard"
+version = "0.1.0"
+description = "FlyGuard: prompt-injection detector on the measured mushroom-body wiring (MaleCNS)"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "numpy",
+  "scipy",
+  "pandas",
+  "pyarrow",
+  "scikit-learn",
+  "xxhash",
+  "datasketch",
+  "langdetect",
+  "datasets",
+  "pyyaml",
+  "transformers",
+  "torch",
+  "sentencepiece",
+  "openai",
+  "agentdojo==0.1.35",
+  "pytest",
+  "matplotlib",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }

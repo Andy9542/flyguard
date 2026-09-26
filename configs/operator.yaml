@@ -1,0 +1,32 @@
+# configs/operator.yaml — filled by the operator (ТЗ "Входные данные от оператора").
+# Deviations from the ТЗ template are recorded in ASSUMPTIONS.md / DEVIATIONS.md (one provider, budget = balance).
+compute:
+  cpu_cores: 16
+  ram_gb: 31
+  gpu: false
+  wall_clock_hours: 56
+data:
+  malecns_mirror: null
+hf:
+  token_env: HF_TOKEN                 # unset on this machine -> Prompt Guard 2 skipped (BLOCKERS B2)
+shared:
+  traces_dir: null                    # empty -> this agent generates the traces
+  traces_out_dir: results/shared/traces
+llm_api:
+  budget_usd: 7.0                     # DeepSeek balance at start was 7.75 USD (checked 2026-09-26); 0.75 kept as margin
+  key_file: /home/ubuntu/projects/ecode/build/.env   # operator: DEEPSEEK_API_KEY is read from this file (scripts/env.sh)
+  providers:                          # ТЗ asks for two; only DeepSeek was authorised (DEVIATIONS D1)
+    - {name: deepseek, key_env: DEEPSEEK_API_KEY, base_url: https://api.deepseek.com}
+  agent_models:                       # pilot order (ТЗ 1.5 / Appendix B)
+    - deepseek-flash
+    - deepseek-v4-pro
+  agent_thinking: disabled            # non-thinking mode: temperature 0 applies, no reasoning_content round-trip
+  paraphrase:
+    generators: [{provider: deepseek, model: deepseek-flash, calls_per_base: 2, thinking: disabled}]
+    judges:     [{provider: deepseek, model: deepseek-v4-pro, thinking: disabled}]
+    temperature_generate: 0.9
+    temperature_judge: 0.0
+  avoid_peak_hours: true              # peak = Mon-Fri 01:00-04:00 and 06:00-10:00 UTC, prices double
+  prices_usd_per_million:             # [off-peak, peak], from api-docs.deepseek.com/quick_start/pricing on 2026-09-26
+    deepseek-flash:  {input_miss: [0.15, 0.30], input_hit: [0.003, 0.006], output: [0.60, 1.20]}
+    deepseek-v4-pro: {input_miss: [0.66, 1.32], input_hit: [0.022, 0.044], output: [1.98, 3.96]}

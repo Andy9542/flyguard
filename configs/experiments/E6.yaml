@@ -1,0 +1,11 @@
+name: E6
+title: Чувствительность
+k_frac: [0.025, 0.10]
+gammas: [0.0, 0.5, 0.9, 0.99]
+weighted_malecns: true
+normalized_bloom: true
+tau_tpr: 0.80
+bipia_all_attacks_positions: true
+transformer_windows_512_tokens: true
+flyhash_expansion_40: true
+shallow_stratum_as_source: true

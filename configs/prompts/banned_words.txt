@@ -1,0 +1,56 @@
+ignore
+ignoring
+disregard
+forget
+override
+overriding
+bypass
+previous
+prior
+above
+instructions
+instruction
+system
+prompt
+prompts
+developer
+admin
+administrator
+root
+jailbreak
+dan
+pretend
+roleplay
+role-play
+act as
+you are now
+from now on
+new task
+important
+urgent
+attention
+reveal
+print
+output
+repeat
+verbatim
+secret
+password
+credentials
+exfiltrate
+send
+forward
+email
+transfer
+confidential
+rules
+restrictions
+guidelines
+policy
+filter
+safety
+comply
+must
+immediately
+do not
+don't

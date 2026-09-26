@@ -1,0 +1,3 @@
+name: E3
+title: Перенос
+folds: {cross_template: 4, cross_suite: 4, double_holdout: 16}

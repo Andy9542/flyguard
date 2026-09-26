@@ -1,0 +1,5 @@
+name: E4
+title: Проводка
+nulls: [curveball, random_same_density, dense_gaussian_sign]
+n_curveball: 200
+readouts: {primary: bloom_full, secondary: [linear, bloom_10shot]}

@@ -1,0 +1,5 @@
+name: E5
+title: Сетка абляций
+noses: [n51_svd, n51_hash, n16k]
+expansions: [none, measured, random_1886, random_327680]
+readouts: [linear, bloom]
