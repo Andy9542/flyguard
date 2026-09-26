@@ -2,7 +2,7 @@
 seeds:
   global: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
   children: [nose, svd, perm, projection, subsample, curveball, bootstrap, paraphrase]   # SeedSequence spawn order
-windows: {size: 256, stride: 192, min_span_chars: 64}
+windows: {size: 256, stride: 192, min_span_chars: 64, text_hash: {algo: xxhash64, seed: 0, encoding: utf-8}}
 normalize: {unicode: NFKC, collapse_whitespace: true, keep_original: true}
 language: {library: langdetect, seed: 0, main: en}
 nose:
@@ -26,7 +26,7 @@ expansion:
 inhibition: {k_frac: 0.05, tie: lowest_index, e6_k_frac: [0.025, 0.10]}
 readout:
   bloom: {gammas: [0.0, 0.5, 0.9, 0.99], balance: subsample_to_minority, e6_normalized: true}
-  linear: {C_grid: [0.01, 0.1, 1.0, 10.0, 100.0], penalty: l2, class_weight: balanced}
+  linear: {C_grid: [0.01, 0.1, 1.0, 10.0, 100.0], penalty: l2, class_weight: balanced, solver: lbfgs, max_iter: 2000, tol: 1.0e-4}   # one factory for MBON readout, LRSvd and TF-IDF+LR
 thresholds:
   fpr_targets: {primary: 0.01, fallback: 0.05}
   pool_min_docs: {fpr_1pct: 2000, fpr_5pct: 500}
@@ -51,13 +51,16 @@ stats:
   holm: true
   randomization: {n_null: 200, two_sided: true}
   h2_margin_pp: 10
+  power: {icc: 0.2, detector_corr: 0.5, n_rep: 30, delta_grid: [0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.075, 0.10, 0.15], power_target: 0.8, min_class_docs: 10}
+  contract: {threshold_min_val_episodes: 200}
   preconditions: {h2_val_auc_deep: 0.75, h3_val_macro_auc: 0.75}
 dedup: {shingle: 5, minhash_perm: 128, jaccard: 0.8}
 splits:
   val_fraction: 0.2
   agentdojo_val_rule: {hash: crc32, mod: 5, rem: 0}
-  contract: {hash: crc32, mod: 3, rem: 2, test_attack: important_instructions, val_fraction: 0.2}
-  bipia: {val_fraction: 0.2}
+  contract: {hash: crc32, mod: 3, rem: 2, test_attack: important_instructions, val_fraction: 0.2,
+             agentdyn_clean_non_test: validation}   # contract §6: all clean non-test AgentDyn runs feed threshold validation
+  bipia: {val_fraction: 0.2, e6_one_string_per_name: true}
 pools: {target_min_docs: 2000}
 paraphrase:
   bases: {agentdojo_templates: [important_instructions, tool_knowledge, injecagent, ignore_previous],
@@ -68,6 +71,9 @@ paraphrase:
   max_accepted_per_base: 5
   banned_words_file: configs/prompts/banned_words.txt
   chi2_extra_words: 30
+  chi2: {min_token_len: 3, exclude_english_stopwords: true, injection_enriched_only: true}   # ASSUMPTIONS A18
+  transport: {max_attempts: 8, timeout_s: 600, backoff_max_s: 90}
+  judge_reason_max_chars: 300
   prompts:
     generator_injection: configs/prompts/generator_injection.txt
     generator_benign: configs/prompts/generator_benign.txt
@@ -92,4 +98,9 @@ traces:
   temperature: 0.0
   logdir: data/traces
   spend_dir: results/spend
-smoke: {seeds: 1, n_null: 20, docs_per_source: 200, bootstrap: 100, episodes: 20, paraphrase_bases: 10}
+  fill_strings: {user: Emma Johnson, model: DeepSeek}   # harness values of {user}/{model} (ASSUMPTIONS A4)
+extraction:
+  decode_yaml_quoted_scalars: true     # second span-matching pass on YAML-quoted tool outputs (DEVIATIONS D7)
+  harm_matching:
+    target_args: [recipient, recipients, cc, bcc, participants, url, repo_name, product_ids, title, password, save_dir, destination_path, source_path, hotel, channel, user, email, filename, file_id]
+smoke: {seeds: 1, n_null: 20, docs_per_source: 200, bootstrap: 100, episodes: 20, paraphrase_bases: 10, power: {n_rep: 5, n_boot: 100}}

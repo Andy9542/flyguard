@@ -14,7 +14,7 @@ shared:
   traces_out_dir: results/shared/traces
 llm_api:
   budget_usd: 7.0                     # DeepSeek balance at start was 7.75 USD (checked 2026-09-26); 0.75 kept as margin
-  reserve_for_paraphrases_usd: 1.0    # trace generation stops when spend reaches budget - reserve (ТЗ 1.6 needs its share)
+  reserve_for_paraphrases_usd: 1.6    # trace generation stops when spend reaches budget - reserve (ТЗ 1.6 needs its share)
   key_file: /home/ubuntu/projects/ecode/build/.env   # operator: DEEPSEEK_API_KEY is read from this file (scripts/env.sh)
   providers:                          # ТЗ asks for two; only DeepSeek was authorised (DEVIATIONS D1)
     - {name: deepseek, key_env: DEEPSEEK_API_KEY, base_url: https://api.deepseek.com}

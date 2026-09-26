@@ -3,5 +3,5 @@ title: Мощность
 aucs: [0.75, 0.85, 0.95]
 curveball_null_on_val: 20
 perm_seeds: 10
-synthetic_bootstrap: 1000
+synthetic_bootstrap: 200
 notinject_pairs: 339
