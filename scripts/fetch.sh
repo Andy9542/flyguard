@@ -19,7 +19,7 @@ dl() {
     :
   else
     netlog "$host" GET "$url" "$purpose"
-    curl -fsSL --retry 3 -m 3600 -o "$dest.part" "$url" && mv "$dest.part" "$dest"
+    curl -fsSL --http1.1 --retry 5 --retry-all-errors --retry-delay 5 -m 7200 -C - ${DL_AUTH:+-H "Authorization: Bearer $DL_AUTH"} -o "$dest.part" "$url" && mv "$dest.part" "$dest"
   fi
   local got; got="$(sha256sum "$dest" | cut -d' ' -f1)"
   if [[ -n "$want" && "$got" != "$want" ]]; then echo "sha256 mismatch for $dest: $got != $want" >&2; exit 1; fi
@@ -63,10 +63,9 @@ model_files() { # <repo> <dir> <extra files...>
 model_files protectai/deberta-v3-base-prompt-injection-v2 protectai_v2
 model_files leolee99/PIGuard piguard modeling_piguard.py __init__.py
 if [[ -n "${HF_TOKEN:-}" ]]; then
-  echo "HF_TOKEN set: fetching Prompt Guard 2"
+  echo "HF_TOKEN set: fetching Prompt Guard 2 (gated; the token is sent only to huggingface.co)"
   for f in config.json model.safetensors tokenizer.json tokenizer_config.json special_tokens_map.json; do
-    netlog huggingface.co GET $HF/meta-llama/Llama-Prompt-Guard-2-86M/resolve/main/$f "model Prompt Guard 2 (gated): $f"
-    curl -fsSL --retry 3 -H "Authorization: Bearer $HF_TOKEN" -o data/raw/models/prompt_guard_2/$f --create-dirs $HF/meta-llama/Llama-Prompt-Guard-2-86M/resolve/main/$f || { echo "Prompt Guard 2 download failed"; break; }
+    DL_AUTH="$HF_TOKEN" dl $HF/meta-llama/Llama-Prompt-Guard-2-86M/resolve/main/$f data/raw/models/prompt_guard_2/$f "model meta-llama/Llama-Prompt-Guard-2-86M (gated): $f" || { echo "Prompt Guard 2 download failed (access not granted yet?)"; break; }
   done
 else
   echo "HF_TOKEN not set: Prompt Guard 2 skipped (BLOCKERS)"

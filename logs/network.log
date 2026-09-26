@@ -7954,3 +7954,41 @@
 2026-09-26T11:51:19Z	huggingface.co	GET	https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M/resolve/main/special_tokens_map.json	model Prompt Guard 2 (gated): special_tokens_map.json
 2026-09-26T11:51:21Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase generator (template tmpl:tool_knowledge:banking:injection_task_4 call 0); stream 2 of 2 permitted outgoing flows
 2026-09-26T11:51:23Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase generator (template tmpl:tool_knowledge:banking:injection_task_4 call 1); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:27Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:tool_knowledge:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:28Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:tool_knowledge:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:30Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:tool_knowledge:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:32Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:tool_knowledge:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:33Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:tool_knowledge:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:35Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase generator (template tmpl:injecagent:banking:injection_task_4 call 0); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:37Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase generator (template tmpl:injecagent:banking:injection_task_4 call 1); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:39Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:injecagent:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:40Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:injecagent:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:42Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:injecagent:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:43Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:injecagent:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:45Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:injecagent:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:46Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:injecagent:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:48Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:injecagent:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:50Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:injecagent:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:52Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase generator (template tmpl:ignore_previous:banking:injection_task_4 call 0); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:53Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase generator (template tmpl:ignore_previous:banking:injection_task_4 call 1); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:55Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:ignore_previous:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:57Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:ignore_previous:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:51:58Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:ignore_previous:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:00Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:ignore_previous:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:01Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:ignore_previous:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:03Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:ignore_previous:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:05Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:ignore_previous:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:06Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:ignore_previous:banking:injection_task_4); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:08Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase generator (template tmpl:important_instructions:banking:injection_task_5 call 0); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:11Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase generator (template tmpl:important_instructions:banking:injection_task_5 call 1); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:13Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:important_instructions:banking:injection_task_5); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:15Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:important_instructions:banking:injection_task_5); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:16Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:important_instructions:banking:injection_task_5); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:18Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:important_instructions:banking:injection_task_5); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:20Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:important_instructions:banking:injection_task_5); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:21Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:important_instructions:banking:injection_task_5); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:23Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:important_instructions:banking:injection_task_5); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:25Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase generator (template tmpl:tool_knowledge:banking:injection_task_5 call 0); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:29Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase generator (template tmpl:tool_knowledge:banking:injection_task_5 call 1); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:33Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:tool_knowledge:banking:injection_task_5); stream 2 of 2 permitted outgoing flows
+2026-09-26T11:52:34Z	api.deepseek.com	POST	https://api.deepseek.com/chat/completions	paraphrase judge (template tmpl:tool_knowledge:banking:injection_task_5); stream 2 of 2 permitted outgoing flows
