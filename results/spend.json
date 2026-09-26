@@ -1,0 +1,149 @@
+{
+ "breakdown": {
+  "attack:agentdojo/important_instructions": {
+   "cache_hit": 1125632.0,
+   "calls": 237.0,
+   "completion_tokens": 41782.0,
+   "cost_usd": 0.164515,
+   "prompt_tokens": 1346586.0
+  },
+  "attack:agentdojo/none": {
+   "cache_hit": 291584.0,
+   "calls": 65.0,
+   "completion_tokens": 7239.0,
+   "cost_usd": 0.036652,
+   "prompt_tokens": 345138.0
+  },
+  "attack:agentdyn/important_instructions": {
+   "cache_hit": 52480.0,
+   "calls": 8.0,
+   "completion_tokens": 925.0,
+   "cost_usd": 0.001046,
+   "prompt_tokens": 54702.0
+  },
+  "attack:agentdyn/none": {
+   "cache_hit": 38784.0,
+   "calls": 7.0,
+   "completion_tokens": 444.0,
+   "cost_usd": 0.001521,
+   "prompt_tokens": 46371.0
+  },
+  "benchmark:agentdojo": {
+   "cache_hit": 1417216.0,
+   "calls": 302.0,
+   "completion_tokens": 49021.0,
+   "cost_usd": 0.201168,
+   "prompt_tokens": 1691724.0
+  },
+  "benchmark:agentdyn": {
+   "cache_hit": 91264.0,
+   "calls": 15.0,
+   "completion_tokens": 1369.0,
+   "cost_usd": 0.002567,
+   "prompt_tokens": 101073.0
+  },
+  "model:deepseek-flash": {
+   "cache_hit": 779776.0,
+   "calls": 165.0,
+   "completion_tokens": 26955.0,
+   "cost_usd": 0.037589,
+   "prompt_tokens": 906953.0
+  },
+  "model:deepseek-v4-pro": {
+   "cache_hit": 728704.0,
+   "calls": 152.0,
+   "completion_tokens": 23435.0,
+   "cost_usd": 0.166145,
+   "prompt_tokens": 885844.0
+  },
+  "stream:traces": {
+   "cache_hit": 1508480.0,
+   "calls": 317.0,
+   "completion_tokens": 50390.0,
+   "cost_usd": 0.203734,
+   "prompt_tokens": 1792797.0
+  },
+  "suite:agentdojo/workspace": {
+   "cache_hit": 1417216.0,
+   "calls": 302.0,
+   "completion_tokens": 49021.0,
+   "cost_usd": 0.201168,
+   "prompt_tokens": 1691724.0
+  },
+  "suite:agentdyn/shopping": {
+   "cache_hit": 91264.0,
+   "calls": 15.0,
+   "completion_tokens": 1369.0,
+   "cost_usd": 0.002567,
+   "prompt_tokens": 101073.0
+  }
+ },
+ "budget_usd": 7.0,
+ "n_calls": 317,
+ "pilot": {
+  "chosen_by_rule": false,
+  "chosen_model": "deepseek-v4-pro",
+  "projection": {
+   "agentdyn_length_factor": 2.5,
+   "budget_usd": 7.0,
+   "cost_per_attacked_episode_usd": 0.00339,
+   "cost_per_clean_episode_usd": 0.003053,
+   "date": "2026-09-26T08:09:09Z",
+   "model": "deepseek-v4-pro",
+   "priorities": [
+    {
+     "attack": "important_instructions",
+     "benchmark": "agentdojo",
+     "clean": true,
+     "cumulative_usd": 3.5133,
+     "episodes_attacked": 949,
+     "episodes_clean": 97,
+     "est_cost_usd": 3.5133,
+     "fits_remaining_budget": true
+    },
+    {
+     "attack": "important_instructions",
+     "benchmark": "agentdyn",
+     "clean": true,
+     "cumulative_usd": 8.7172,
+     "episodes_attacked": 560,
+     "episodes_clean": 60,
+     "est_cost_usd": 5.2039,
+     "fits_remaining_budget": false
+    },
+    {
+     "attack": "tool_knowledge",
+     "benchmark": "agentdojo",
+     "cumulative_usd": 11.9343,
+     "episodes_attacked": 949,
+     "episodes_clean": 0,
+     "est_cost_usd": 3.2171,
+     "fits_remaining_budget": false
+    },
+    {
+     "attack": "injecagent",
+     "benchmark": "agentdojo",
+     "cumulative_usd": 15.1514,
+     "episodes_attacked": 949,
+     "episodes_clean": 0,
+     "est_cost_usd": 3.2171,
+     "fits_remaining_budget": false
+    },
+    {
+     "attack": "ignore_previous",
+     "benchmark": "agentdojo",
+     "cumulative_usd": 18.3685,
+     "episodes_attacked": 949,
+     "episodes_clean": 0,
+     "est_cost_usd": 3.2171,
+     "fits_remaining_budget": false
+    }
+   ],
+   "remaining_usd": 6.79627,
+   "spent_usd": 0.20373
+  }
+ },
+ "remaining_usd": 6.796266,
+ "spent_usd": 0.203734,
+ "within_budget": true
+}

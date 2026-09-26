@@ -190,14 +190,19 @@ def project_cost(cfg: Configs, pilot: dict[str, Any]) -> dict[str, Any]:
     counts = episode_counts(cfg)
     ca, cc = cand["cost_per_attacked_episode_usd"], cand["cost_per_clean_episode_usd"]
     dyn_factor = 2.5  # AgentDyn episodes are longer (~7 steps, 3 apps); refined after its first shard
-    budget = float(cfg.operator["llm_api"]["budget_usd"])
+    budget = trace_budget(cfg)
     spent = spend_mod.total_usd(cfg)
     remaining = budget - spent
     items = []
     cum = 0.0
     for pr in cfg.default["traces"]["priority"]:
         bench = pr["benchmark"]
-        n_att = counts[bench]["pairs_per_attack"]
+        scope = pr.get("tasks", "all")
+        if scope == "all":
+            n_att = counts[bench]["pairs_per_attack"]
+        else:
+            n_att = sum(len(tasks_in_scope(cfg, bench, suite, scope)) * len(list_suite(cfg, bench, suite)["injection_tasks"])
+                        for suite in cfg.default["traces"][bench]["suites"])
         n_cln = counts[bench]["clean"] if pr.get("clean") else 0
         f = dyn_factor if bench == "agentdyn" else 1.0
         est = f * (n_att * ca + n_cln * cc)
@@ -205,37 +210,64 @@ def project_cost(cfg: Configs, pilot: dict[str, Any]) -> dict[str, Any]:
         items.append({**pr, "episodes_attacked": n_att, "episodes_clean": n_cln, "est_cost_usd": round(est, 4),
                       "cumulative_usd": round(cum, 4), "fits_remaining_budget": cum <= remaining})
     return {"model": model, "cost_per_attacked_episode_usd": ca, "cost_per_clean_episode_usd": cc,
-            "agentdyn_length_factor": dyn_factor, "budget_usd": budget, "spent_usd": round(spent, 5),
+            "agentdyn_length_factor": dyn_factor, "trace_budget_usd": budget, "spent_usd": round(spent, 5),
             "remaining_usd": round(remaining, 5), "priorities": items,
             "date": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
 # ------------------------------------------------------------------------------------------- full run
 
+def is_contract_test_task(user_task_id: str, cfg: Configs) -> bool:
+    """Contract §6: crc32 of the user-task identifier string modulo 3 equals 2 (ASSUMPTIONS A12)."""
+    import zlib
+    rule = cfg.default["splits"]["contract"]
+    return zlib.crc32(user_task_id.encode("utf-8")) % rule["mod"] == rule["rem"]
+
+
+def tasks_in_scope(cfg: Configs, benchmark: str, suite: str, scope: str) -> list[str]:
+    tasks = list_suite(cfg, benchmark, suite)["user_tasks"]
+    if scope == "contract_test":
+        return [t for t in tasks if is_contract_test_task(t, cfg)]
+    if scope == "contract_non_test":
+        return [t for t in tasks if not is_contract_test_task(t, cfg)]
+    return tasks
+
+
+def trace_budget(cfg: Configs) -> float:
+    llm = cfg.operator["llm_api"]
+    return float(llm["budget_usd"]) - float(llm.get("reserve_for_paraphrases_usd", 0.0))
+
+
 def run_priority(cfg: Configs, model: str, item: dict[str, Any], max_workers: int) -> list[dict[str, Any]]:
-    """One priority item = (benchmark, attack[, clean]) over all its suites; shards run in parallel processes.
+    """One priority item = (benchmark, attack[, clean], tasks scope) over all its suites; shards run in parallel.
 
     Idempotent: the harness skips episodes whose log exists. Returns the shard summaries."""
     _key_ok()
     bench = item["benchmark"]
     suites = cfg.default["traces"][bench]["suites"]
-    jobs: list[tuple[str, str, str]] = []  # (suite, attack, shard)
+    scope = item.get("tasks", "all")
+    jobs: list[tuple[str, str, str, str]] = []  # (suite, attack, shard, user_tasks)
     for suite in suites:
         if item.get("clean"):
-            jobs.append((suite, "none", ""))
+            jobs.append((suite, "none", "", ""))
     n_shards = max(1, max_workers // len(suites))
     for suite in suites:
+        scoped = tasks_in_scope(cfg, bench, suite, scope)
+        if not scoped:
+            continue
         for k in range(n_shards):
-            jobs.append((suite, item["attack"], f"{k}/{n_shards}"))
+            jobs.append((suite, item["attack"], f"{k}/{n_shards}", ",".join(scoped) if scope != "all" else ""))
     running: list[tuple[subprocess.Popen, tuple[str, str, str], Path]] = []
     summaries = []
     pending = list(jobs)
     while pending or running:
         while pending and len(running) < max_workers:
-            suite, attack, shard = pending.pop(0)
-            name = f"{bench}_{suite}_{attack}" + (f"_s{shard.replace('/', 'of')}" if shard else "")
+            suite, attack, shard, user_tasks = pending.pop(0)
+            name = f"{bench}_{suite}_{attack}_{scope}" + (f"_s{shard.replace('/', 'of')}" if shard else "")
             summary_path = ROOT / "results" / "spend" / "summaries" / f"{name}.json"
-            cmd = runner_cmd(cfg, bench, suite, attack, model, name, shard=shard, summary=str(summary_path))
+            cmd = runner_cmd(cfg, bench, suite, attack, model, name, shard=shard, user_tasks=user_tasks,
+                             summary=str(summary_path))
+            cmd[cmd.index("--budget-usd") + 1] = str(trace_budget(cfg))
             log = open(ROOT / "logs" / f"gen_{name}.log", "a", encoding="utf-8")
             proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=log, text=True)
             running.append((proc, (suite, attack, shard), summary_path))
@@ -269,7 +301,7 @@ def run_all(cfg: Configs, only: list[int] | None = None) -> dict[str, Any]:
         if only is not None and idx not in only:
             continue
         proj = pilot["projection"]["priorities"][idx]
-        remaining = float(cfg.operator["llm_api"]["budget_usd"]) - spend_mod.total_usd(cfg)
+        remaining = trace_budget(cfg) - spend_mod.total_usd(cfg)
         if proj["est_cost_usd"] > remaining:
             out["items"].append({**item, "skipped": "projected cost exceeds remaining budget",
                                  "est_cost_usd": proj["est_cost_usd"], "remaining_usd": round(remaining, 4)})
