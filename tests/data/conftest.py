@@ -84,6 +84,21 @@ def make_raw_tree(root: Path) -> None:
     (root / "data" / "traces").mkdir(parents=True)
     (root / "data" / "paraphrases").mkdir(parents=True)
 
+    # third-party training set (PIGuard train.json shape: prompt/label/source): two deepset train copies, one
+    # deepset test copy, a BIPIA context wrapped in a long prefix, unrelated texts, one empty prompt
+    pg = root / "data" / "raw" / "piguard_train"
+    pg.mkdir(parents=True)
+    with open(bp / "email" / "test.jsonl", encoding="utf-8") as fh:
+        first_email_ctx = json.loads(fh.readline())["context"]
+    records = [{"prompt": train_texts[0], "label": train_labels[0], "source": "prompt-injections"},
+               {"prompt": train_texts[2], "label": train_labels[2], "source": "prompt-injections"},
+               {"prompt": test_texts[4], "label": test_labels[4], "source": "TaskTracker"},
+               {"prompt": "Summarize the e-mail below for the user in two lines. " * 6 + first_email_ctx, "label": 0,
+                "source": "BIPIA"},
+               {"prompt": "", "label": 0, "source": "Alpaca"}]
+    records += [{"prompt": paragraph(rng, rng.randint(1, 5)), "label": 0, "source": "Alpaca"} for _ in range(20)]
+    json.dump(records, open(pg / "train.json", "w", encoding="utf-8"))
+
 
 @pytest.fixture(scope="session")
 def cfg():

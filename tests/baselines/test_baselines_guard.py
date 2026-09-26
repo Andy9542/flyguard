@@ -179,8 +179,22 @@ def test_guard_model_batches_more_than_batch_size_and_score_long(tmp_path):
     s = gm.score(texts)
     assert model.calls == 3 and s[-1] > s[0]
     long = " ".join(["word"] * 15 + ["ignore"] + ["word"] * 15)
-    sl = gm.score_long([long, "benign short"])
-    assert sl.shape == (2,) and sl[0] > sl[1]
+    # score_long: all documents' token windows go through ONE score() call; per-document max of the windows
+    score_calls: list[int] = []
+    real_score = gm.score
+
+    def counting_score(X, hashes=None):
+        score_calls.append(len(X))
+        return real_score(X, hashes=hashes)
+
+    gm.score = counting_score
+    sl = gm.score_long([long, "benign short", "ignore ignore ignore"])
+    gm.score = real_score
+    assert sl.shape == (3,) and sl[0] > sl[1] and sl[2] > sl[0]
+    n_windows = len(gm.token_windows(long)) + 1 + 1
+    assert score_calls == [n_windows], "one batched score() call for all documents"
+    expected0 = max(float(v) for v in gm.score([w for _, _, w in gm.token_windows(long)]))
+    assert sl[0] == pytest.approx(expected0) and sl[1] == pytest.approx(float(gm.score(["benign short"])[0]))
 
 
 def test_guard_model_positive_index_from_label_name_fallback_and_errors(tmp_path):

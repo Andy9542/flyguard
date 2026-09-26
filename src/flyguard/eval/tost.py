@@ -70,13 +70,18 @@ def holm_reject(pvalues: Mapping[str, float], alpha: float = 0.05) -> dict[str, 
     return {k: bool(p <= alpha) for k, p in holm(pvalues).items()}
 
 
-def randomization_p(observed: float, nulls: Sequence[float] | np.ndarray, two_sided: bool = True,
-                    center: float | str = "mean", alternative: str = "greater") -> float:
+def randomization_p(observed: float, nulls: Sequence[float] | np.ndarray, two_sided: bool | None = None,
+                    center: float | str = "mean", alternative: str = "greater",
+                    cfg: Configs | None = None) -> float:
     """Exact randomisation p-value of one observed statistic against N null statistics (ТЗ 3.3 / Этап 4: measured M
     against 200 curveball matrices): p = (1 + #{|null − c| >= |obs − c|}) / (N + 1), c = mean of the nulls (or a
     number, 0 for statistics that are already centred). The +1 counts the observed value as one of the N + 1
     exchangeable outcomes, so p is never 0 and the smallest attainable value is 1/(N + 1) (1/201 for 200 nulls).
-    One-sided (``two_sided=False``): ``alternative`` "greater" counts nulls >= obs, "less" nulls <= obs."""
+    ``two_sided=None`` reads ``stats.randomization.two_sided`` (the ТЗ's "двусторонний p"); one-sided
+    (``two_sided=False``): ``alternative`` "greater" counts nulls >= obs, "less" nulls <= obs."""
+    if two_sided is None:
+        cfg = cfg or load_configs()
+        two_sided = bool(cfg.default["stats"]["randomization"]["two_sided"])
     x = np.asarray(nulls, dtype=float)
     x = x[np.isfinite(x)]
     n = x.size

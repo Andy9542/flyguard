@@ -3,8 +3,15 @@
 Rule: MinHash over character 5-gram shingles, within class, across all sources; a *test* window whose Jaccard
 similarity with any train/validation window of the same class is >= the threshold is excluded from the test
 (``dedup_excluded=True``, ``dup_of`` = the most similar reference window). Train/val windows are never touched, so
-the training set is not changed by dedup and the test cannot leak memorised text. LSH candidates are verified
-with the exact Jaccard so the result is deterministic and does not depend on LSH banding luck.
+the training set is not changed by dedup and the test cannot leak memorised text.
+
+Candidates come from a MinHash LSH and every candidate is verified with the exact Jaccard, so the decision itself
+never depends on the sketch: a false candidate is discarded, and a pair the LSH misses is the only error mode.
+The banding is therefore chosen for *recall at the threshold*, not for datasketch's balanced false-positive /
+false-negative optimum: with the config's 128 permutations, ``threshold=0.8`` would give b=9, r=13 and only a 40 %
+chance of surfacing a pair at J=0.80 (review finding); :func:`lsh_params` picks the largest band size whose
+candidate probability at J=threshold is at least ``LSH_RECALL`` (b=25, r=5: 0.99995 at J=0.80, 0.059 at J=0.30),
+and the numbers are recorded in ``dedup.json['rule']``.
 """
 from __future__ import annotations
 
@@ -15,6 +22,9 @@ import pandas as pd
 from datasketch import MinHash, MinHashLSH
 
 REF_SPLITS = ("train", "val")
+LSH_RECALL = 0.9999
+"""Minimum probability that a pair with Jaccard exactly at the threshold becomes an LSH candidate (engineering
+constant of the candidate stage, not a ТЗ number: the ТЗ fixes the exact rule, Jaccard >= 0.8)."""
 
 
 def char_shingles(text: str, n: int) -> set[str]:
@@ -39,11 +49,102 @@ def jaccard(a: Iterable[str], b: Iterable[str]) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
+def containment(a: Iterable[str], b: Iterable[str]) -> float:
+    """Share of ``a``'s shingles present in ``b`` (|a ∩ b| / |a|); 0.0 for an empty ``a``. Used by the
+    contamination audit (ТЗ 3.2) for copies embedded in a longer training text, where Jaccard is diluted."""
+    sa, sb = set(a), set(b)
+    if not sa:
+        return 0.0
+    return len(sa & sb) / len(sa)
+
+
 def minhash_of(shingles: Iterable[str], num_perm: int) -> MinHash:
     """datasketch MinHash of a shingle set with ``dedup.minhash_perm`` permutations (ТЗ 1.7)."""
     m = MinHash(num_perm=num_perm)
     m.update_batch([s.encode("utf-8") for s in shingles])
     return m
+
+
+def candidate_probability(j: float, b: int, r: int) -> float:
+    """Probability that a pair of Jaccard ``j`` shares at least one of ``b`` bands of ``r`` rows."""
+    return 1.0 - (1.0 - float(j) ** r) ** b
+
+
+def lsh_params(num_perm: int, threshold: float, recall: float = LSH_RECALL) -> tuple[int, int]:
+    """Banding ``(b, r)`` with ``b * r <= num_perm``: the largest ``r`` (fewest spurious candidates) whose candidate
+    probability at ``J = threshold`` is still >= ``recall``. Falls back to ``r = 1`` (every row its own band, the
+    highest recall possible) when no banding reaches the floor."""
+    best: tuple[int, int] | None = None
+    for r in range(1, int(num_perm) + 1):
+        b = int(num_perm) // r
+        if b < 1:
+            break
+        if candidate_probability(threshold, b, r) >= recall:
+            best = (b, r)
+    return best or (int(num_perm), 1)
+
+
+class NearDuplicateIndex:
+    """MinHash-LSH candidates + exact Jaccard verification over character shingles (ТЗ 1.7 machinery).
+
+    Shared by :func:`find_test_duplicates` (test windows against train/val windows) and by the contamination audit
+    (ТЗ 3.2, :mod:`flyguard.data.audit`). Texts are kept to recompute shingles on demand for verification, so the
+    index costs one string per key instead of one shingle set.
+    """
+
+    def __init__(self, shingle: int, num_perm: int, threshold: float, recall: float = LSH_RECALL):
+        self.shingle, self.num_perm, self.threshold, self.recall = int(shingle), int(num_perm), float(threshold), float(recall)
+        self.b, self.r = lsh_params(self.num_perm, self.threshold, self.recall)
+        self.lsh = MinHashLSH(num_perm=self.num_perm, params=(self.b, self.r))
+        self.texts: dict[str, str] = {}
+
+    def __len__(self) -> int:
+        return len(self.texts)
+
+    def shingles(self, text: str) -> set[str]:
+        return char_shingles(text, self.shingle)
+
+    def minhash(self, text: str) -> MinHash | None:
+        sh = self.shingles(text)
+        return minhash_of(sh, self.num_perm) if sh else None
+
+    def add(self, key: str, text: str, minhash: MinHash | None = None) -> bool:
+        """Insert ``key``; returns False for a text without shingles (empty), which can never match."""
+        if key in self.texts:
+            raise KeyError(f"duplicate key {key!r}")
+        m = minhash if minhash is not None else self.minhash(text)
+        if m is None:
+            return False
+        self.texts[key] = text
+        self.lsh.insert(key, m)
+        return True
+
+    def query(self, text: str, minhash: MinHash | None = None, shingles: set[str] | None = None) -> list[tuple[str, float]]:
+        """Every indexed key whose exact Jaccard with ``text`` is >= the threshold, best first (ties by key).
+        ``shingles``/``minhash`` of ``text`` may be passed when the caller already computed them."""
+        sh = shingles if shingles is not None else self.shingles(text)
+        if not sh:
+            return []
+        m = minhash if minhash is not None else minhash_of(sh, self.num_perm)
+        hits = []
+        for key in self.lsh.query(m):
+            j = jaccard(sh, self.shingles(self.texts[key]))
+            if j >= self.threshold:
+                hits.append((key, j))
+        hits.sort(key=lambda kv: (-kv[1], kv[0]))
+        return hits
+
+    def best(self, text: str, minhash: MinHash | None = None, shingles: set[str] | None = None) -> tuple[str, float] | None:
+        hits = self.query(text, minhash, shingles)
+        return hits[0] if hits else None
+
+    def rule(self) -> dict[str, Any]:
+        """The numbers of the candidate stage for manifests."""
+        return {"minhash_perm": self.num_perm, "lsh_bands": self.b, "lsh_rows": self.r,
+                "candidate_recall_at_threshold": round(candidate_probability(self.threshold, self.b, self.r), 6),
+                "candidate_recall_floor": self.recall,
+                "lsh_equivalent_threshold": round((1.0 / self.b) ** (1.0 / self.r), 4),
+                "verification": "exact Jaccard >= threshold over the same shingles"}
 
 
 def find_test_duplicates(windows: pd.DataFrame, shingle: int, num_perm: int, threshold: float) -> dict[str, str]:
@@ -63,28 +164,15 @@ def find_test_duplicates(windows: pd.DataFrame, shingle: int, num_perm: int, thr
         test_l = test[test["label"] == label]
         if ref_l.empty or test_l.empty:
             continue
-        lsh = MinHashLSH(threshold=threshold, num_perm=num_perm)
-        ref_text: dict[str, str] = {}
+        index = NearDuplicateIndex(shingle, num_perm, threshold)
         for wid, text in ref_l[["window_id", "text"]].itertuples(index=False, name=None):
-            sh = char_shingles(text, shingle)
-            if not sh:
-                continue
-            ref_text[wid] = text
-            lsh.insert(wid, minhash_of(sh, num_perm))
-        if not ref_text:
+            index.add(wid, text)
+        if not len(index):
             continue
         for wid, text in test_l[["window_id", "text"]].itertuples(index=False, name=None):
-            sh = char_shingles(text, shingle)
-            if not sh:
-                continue
-            cands = lsh.query(minhash_of(sh, num_perm))
-            best_id, best_j = None, -1.0
-            for cid in sorted(cands):
-                j = jaccard(sh, char_shingles(ref_text[cid], shingle))
-                if j >= threshold and j > best_j:
-                    best_id, best_j = cid, j
-            if best_id is not None:
-                dup_of[wid] = best_id
+            hit = index.best(text)
+            if hit is not None:
+                dup_of[wid] = hit[0]
     return dup_of
 
 
@@ -155,6 +243,16 @@ def _drops_by_variant(documents: pd.DataFrame, dropped: set[str]) -> dict[str, i
     return dict(sorted(out.items()))
 
 
+def dedup_rule(cfg: Any) -> dict[str, Any]:
+    """The ТЗ 1.7 numbers plus the candidate-stage banding, as written to ``dedup.json['rule']``."""
+    d = cfg.default["dedup"]
+    shingle, num_perm, thr = int(d["shingle"]), int(d["minhash_perm"]), float(d["jaccard"])
+    rule = {"shingle": shingle, "jaccard": thr, "scope": "test vs train+val, within class",
+            "reference_splits": list(REF_SPLITS)}
+    rule.update(NearDuplicateIndex(shingle, num_perm, thr).rule())
+    return rule
+
+
 def dedup_windows(documents: pd.DataFrame, windows: pd.DataFrame, cfg: Any) -> tuple[pd.DataFrame, set[str], dict]:
     """Run ТЗ 1.7 end to end: returns (windows with flags, dropped doc ids, dedup.json payload)."""
     d = cfg.default["dedup"]
@@ -172,7 +270,7 @@ def dedup_windows(documents: pd.DataFrame, windows: pd.DataFrame, cfg: Any) -> t
         key = f"{src_of[wid]}->{ref_src[rid]}"
         by_pair[key] = by_pair.get(key, 0) + 1
     report = {
-        "rule": {"shingle": shingle, "minhash_perm": num_perm, "jaccard": thr, "scope": "test vs train+val, within class"},
+        "rule": dedup_rule(cfg),
         "windows_total": int(len(out)),
         "windows_test": int((out["split"] == "test").sum()),
         "windows_reference": int(out["split"].isin(REF_SPLITS).sum()),

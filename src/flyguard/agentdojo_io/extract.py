@@ -11,11 +11,12 @@ import argparse
 import datetime as dt
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 import pandas as pd
 
 from flyguard.agentdojo_io import labels as L
+from flyguard.agentdojo_io.contract import split_manifest, validate_split_manifest, write_split_manifest
 from flyguard.agentdojo_io.parse import (NONE_TOKEN, TraceLog, episode_id, iter_log_paths, read_log, tool_steps,
                                           unanswered_tool_calls)
 from flyguard.config import ROOT, Configs, load_configs, seeds_for
@@ -23,6 +24,7 @@ from flyguard.io import atomic_write_json, read_json, sha256_file
 from flyguard.netlog import DATA_ACCESS_LOG, log_data_access
 
 SOURCE_PREFIX = {"agentdojo": "dojo", "agentdyn": "dyn"}
+BENCHMARKS = ("agentdojo", "agentdyn")
 
 EPISODE_COLUMNS = ["episode_id", "benchmark", "suite", "user_task", "injection_task", "attack", "model", "episode_class",
                    "utility", "security", "n_steps", "injection_step", "first_harmful_step", "match", "contract_split",
@@ -34,12 +36,26 @@ DOCUMENT_COLUMNS = ["doc_id", "source", "split", "label", "text", "text_orig", "
 """`documents.parquet` columns for the dojo/dyn sources, design §2."""
 
 FILL_STRINGS = {"user": "Emma Johnson", "model": "DeepSeek"}
-"""Values the harness substitutes for `{user}` / `{model}` in the attack templates: `Emma Johnson` is agentdojo's
-`ImportantInstructionsAttack.user_name`, `DeepSeek` the prose name registered for both candidate agent models
-in `gen/harness_run.py` (ASSUMPTIONS A4). Recorded in the manifest (design §3); the log's `injections` are
-already filled, the parser only checks that no placeholder survived."""
+"""Fallback copy of `configs/default.yaml` `traces.fill_strings` for callers without a config: the values the
+harness substitutes for `{user}` / `{model}` in the attack templates (`Emma Johnson` is agentdojo's
+`ImportantInstructionsAttack.user_name`, `DeepSeek` the prose name registered for both candidate agent models in
+`gen/harness_run.py`, ASSUMPTIONS A4). `build_episode_documents` reads the frozen config value, records it in
+the manifest (design §3) and hands it to the span matcher; the log's `injections` are already filled, so on real
+logs the substitution is a no-op and `unfilled_placeholders` counts what survived in the raw log."""
 
 MANIFEST_PATH = ROOT / "data" / "manifests" / "traces_extraction.json"
+SPLIT_MANIFEST_PATH = ROOT / "results" / "shared" / "split_manifest.json"
+
+
+def extraction_settings(cfg: Configs) -> dict[str, Any]:
+    """The frozen extraction constants of `configs/default.yaml`, read here and nowhere hard-coded (CLAUDE.md):
+    `extraction.decode_yaml_quoted_scalars` (the second span-matching pass, DEVIATIONS D7), `traces.fill_strings`
+    (ASSUMPTIONS A4) and `extraction.harm_matching.target_args` (key arguments of meta-derived references)."""
+    extraction = cfg.default.get("extraction") or {}
+    fill = (cfg.default.get("traces") or {}).get("fill_strings") or FILL_STRINGS
+    return {"decode_yaml_quoted_scalars": bool(extraction.get("decode_yaml_quoted_scalars", True)),
+            "fill_strings": {str(k): str(v) for k, v in dict(fill).items()},
+            "target_args": list(L.target_args_from_cfg(cfg))}
 
 
 def traces_root(cfg: Configs, benchmark: str) -> Path:
@@ -132,32 +148,42 @@ def build_episode_documents(cfg: Configs, benchmark: str, model: str | None = No
     the benchmark's section of `data/manifests/traces_extraction.json` (design §3).
 
     Rules implemented: step numbering from 0 (contract §3, `parse.tool_steps`); step label and spans by exact
-    match after normalisation, `injection_step` = first labelled step (ТЗ 1.5); `episode_class` (contract §2 +
-    `error`); `first_harmful_step`/`match` (contract §4, `configs/harm_references.yaml` with the meta ground
-    truth as fallback); contract split (§6: test tasks by crc32 mod 3 == 2, validation = `val_fraction` of the
-    non-test tasks of each suite drawn with the `subsample` child of `global_seed`, `important_instructions`
-    excluded from training/validation); E1 role (ТЗ 1.8/1.10: AgentDojo tasks with crc32 mod 5 == 0 -> `val`,
-    the rest and all AgentDyn -> `test`); `doc_id = <src>:<episode_id>#<step>`, `cluster_id = <suite>/<user_task>`.
+    match after normalisation, with the YAML-quoted second pass only when `extraction.decode_yaml_quoted_scalars`
+    is true (D7), `injection_step` = first labelled step (ТЗ 1.5); `episode_class` (contract §2 + `error`);
+    `first_harmful_step`/`match` (contract §4, `configs/harm_references.yaml` with the meta ground truth as
+    fallback, key arguments `extraction.harm_matching.target_args`); contract split (§6: test tasks by crc32
+    mod 3 == 2; validation = `labels.validation_tasks`: for AgentDojo `val_fraction` of the non-test tasks of
+    each suite from the `subsample` child of `global_seed`, for AgentDyn every non-test task when
+    `splits.contract.agentdyn_clean_non_test == "validation"` (A19); `important_instructions` excluded from
+    training/validation); E1 role (ТЗ 1.8/1.10: AgentDojo tasks with crc32 mod 5 == 0 -> `val`, the rest and
+    all AgentDyn -> `test`); `doc_id = <src>:<episode_id>#<step>`, `cluster_id = <suite>/<user_task>`.
 
     Excluded from `documents` but kept in `episodes`: `error` episodes and attacked episodes without a
     recovered span (`injection_step` null) — their tool outputs carry the injection in a form the exact match did
     not find, so they can be neither positives nor negatives. Steps with empty output produce no document.
-    Test material is read through `flyguard.netlog.log_data_access` (one line per suite directory).
+    Test material is journalled through `flyguard.netlog.log_data_access` *before* any file is opened (one line
+    per suite directory with its file count), so an aborted run still leaves the read on record.
     """
     if benchmark not in SOURCE_PREFIX:
         raise ValueError(f"unknown benchmark {benchmark!r}; expected one of {sorted(SOURCE_PREFIX)}")
     src = SOURCE_PREFIX[benchmark]
     root = Path(traces_dir) if traces_dir is not None else traces_root(cfg, benchmark)
     model = model or choose_model(cfg, benchmark, root)
+    settings = extraction_settings(cfg)
+    rule = L.contract_rule(cfg)
+    seed = seeds_for(cfg, global_seed)["subsample"]
     stats: dict[str, Any] = {
         "benchmark": benchmark, "model": model, "traces_dir": _relpath(root), "n_logs": 0,
         "episodes_by_class": {}, "episodes_by_contract_split": {}, "episodes_by_attack": {}, "e1_val_task_episodes": 0,
         "steps_total": 0, "steps_labelled": 0, "steps_labelled_by_mode": {}, "documents": 0, "documents_positive": 0,
-        "empty_steps": 0,
+        "empty_steps": 0, "escaped_pass_skipped_map_mismatch": 0,
         "unanswered_tool_calls": 0, "unfilled_placeholders": 0,
         "attacked_without_span": {"count": 0, "episode_ids": []}, "errors": {"count": 0, "episode_ids": []},
-        "match_counts": {}, "unmatched": {"count": 0, "episode_ids": []}, "reference_sources": {},
-        "fill_strings": dict(FILL_STRINGS), "normalizer": L.normalizer_source(), "val_tasks": {},
+        "match_counts": {}, "match_counts_by_class": {}, "unmatched": {"count": 0, "episode_ids": []},
+        "unmatched_hijacked": {"count": 0, "episode_ids": []}, "reference_sources": {},
+        "fill_strings": settings["fill_strings"], "decode_yaml_quoted_scalars": settings["decode_yaml_quoted_scalars"],
+        "target_args": settings["target_args"], "normalizer": L.normalizer_source(),
+        "validation_rule": L.validation_rule_text(benchmark, rule), "val_seed": int(seed), "val_tasks": {},
         "generated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     if model is None or not (root / model).exists():
@@ -166,18 +192,22 @@ def build_episode_documents(cfg: Configs, benchmark: str, model: str | None = No
         return _empty_frames()
 
     paths = list(iter_log_paths(root, model))
-    logs: list[tuple[Path, TraceLog]] = [(p, read_log(p)) for p in paths]
-    for suite_dir in sorted({p.parent.parent.parent for p in paths}):
-        n = sum(1 for p in paths if p.parent.parent.parent == suite_dir)
+    files_per_suite: dict[Path, int] = {}
+    for p in paths:
+        files_per_suite[p.parent.parent.parent] = files_per_suite.get(p.parent.parent.parent, 0) + 1
+    for suite_dir in sorted(files_per_suite):  # journal the test read before the first file is opened
         log_data_access(suite_dir, split="test",
-                        purpose=f"agentdojo_io.extract {benchmark}: {n} trace logs parsed into step documents "
-                                "(test tasks included; tool outputs never printed)", path=Path(data_access_log))
+                        purpose=f"agentdojo_io.extract {benchmark}: {files_per_suite[suite_dir]} trace logs parsed into "
+                                "step documents (test tasks included; tool outputs never printed)",
+                        path=Path(data_access_log))
+    logs: list[tuple[Path, TraceLog]] = [(p, read_log(p)) for p in paths]
 
     refs = L.load_harm_references(harm_refs_path) if Path(harm_refs_path).exists() else {}
-    rule = L.contract_rule(cfg)
     e1_rule = L.e1_val_rule(cfg)
-    seed = seeds_for(cfg, global_seed)["subsample"]
     lang_seed = int(cfg.default.get("language", {}).get("seed", 0))
+    decode = settings["decode_yaml_quoted_scalars"]
+    fill = settings["fill_strings"]
+    target_args = settings["target_args"]
     metas: dict[str, dict[str, Any] | None] = {}
     val_tasks: dict[str, set[str]] = {}
     for _, log in logs:
@@ -187,7 +217,7 @@ def build_episode_documents(cfg: Configs, benchmark: str, model: str | None = No
     for suite, meta in metas.items():
         universe = set((meta or {}).get("user_tasks") or {}) | {lg.user_task_id for _, lg in logs if lg.suite_name == suite}
         non_test = [t for t in universe if not L.is_test_task(t, rule)]
-        val_tasks[suite] = L.val_task_ids(non_test, seed, float(rule.get("val_fraction", 0.2)))
+        val_tasks[suite] = L.validation_tasks(benchmark, suite, non_test, seed, rule)
         stats["val_tasks"][suite] = sorted(val_tasks[suite])
 
     episodes: list[dict[str, Any]] = []
@@ -197,14 +227,17 @@ def build_episode_documents(cfg: Configs, benchmark: str, model: str | None = No
         steps = tool_steps(log)
         cls = L.episode_class(log)
         attacked = log.injection_task_id is not None
-        details = [L.injection_spans_detail(s.output_text, log.injections) for s in steps] if attacked else [([], None) for _ in steps]
-        spans = [d[0] for d in details]
-        span_modes = [d[1] for d in details]
+        reports = ([L.injection_spans_report(s.output_text, log.injections, fill, decode) for s in steps] if attacked
+                   else [L.SpanReport() for _ in steps])
+        spans = [r.spans for r in reports]
+        span_modes = [r.mode for r in reports]
+        stats["escaped_pass_skipped_map_mismatch"] += sum(1 for r in reports if not r.map_ok)
         for mode in span_modes:
             if mode is not None:
                 stats["steps_labelled_by_mode"][mode] = stats["steps_labelled_by_mode"].get(mode, 0) + 1
         inj_step = next((s.index for s, sp in zip(steps, spans) if sp), None)
-        ref_calls, ref_source = L.reference_calls(benchmark, log.suite_name, log.injection_task_id, refs, metas.get(log.suite_name))
+        ref_calls, ref_source = L.reference_calls(benchmark, log.suite_name, log.injection_task_id, refs,
+                                                  metas.get(log.suite_name), target_args)
         harmful = L.first_harmful_step(steps, ref_calls) if attacked else (None, None)
         split = L.contract_split(log.user_task_id, log.attack_type, val_tasks.get(log.suite_name, set()), rule)
         rec = _episode_record(log, benchmark, model, steps, cls, inj_step, harmful, split, path, e1_rule)
@@ -222,9 +255,14 @@ def build_episode_documents(cfg: Configs, benchmark: str, model: str | None = No
         if attacked:
             stats["reference_sources"][ref_source] = stats["reference_sources"].get(ref_source, 0) + 1
             stats["match_counts"][harmful[1]] = stats["match_counts"].get(harmful[1], 0) + 1
+            by_class = stats["match_counts_by_class"].setdefault(cls, {})
+            by_class[harmful[1]] = by_class.get(harmful[1], 0) + 1
             if harmful[1] == L.MATCH_UNMATCHED and cls != L.CLASS_ERROR:
                 stats["unmatched"]["count"] += 1
                 stats["unmatched"]["episode_ids"].append(rec["episode_id"])
+                if cls == L.CLASS_HIJACKED:  # the ones contract §4 drops from the stopped-before-harm metric (A20)
+                    stats["unmatched_hijacked"]["count"] += 1
+                    stats["unmatched_hijacked"]["episode_ids"].append(rec["episode_id"])
         if cls == L.CLASS_ERROR:
             stats["errors"]["count"] += 1
             stats["errors"]["episode_ids"].append(rec["episode_id"])
@@ -257,7 +295,7 @@ def build_episode_documents(cfg: Configs, benchmark: str, model: str | None = No
             stats["documents"] += 1
             stats["documents_positive"] += label
 
-    for key in ("attacked_without_span", "errors", "unmatched"):
+    for key in ("attacked_without_span", "errors", "unmatched", "unmatched_hijacked"):
         stats[key]["episode_ids"].sort()
     _write_manifest(manifest_path, benchmark, stats)
     episodes_df = _typed_episodes(pd.DataFrame(episodes, columns=EPISODE_COLUMNS)) if episodes else _empty_frames()[0]
@@ -277,33 +315,74 @@ def _write_manifest(path: str | Path | None, benchmark: str, stats: dict[str, An
     atomic_write_json(path, current)
 
 
+def build_all(cfg: Configs, benchmarks: Sequence[str] = BENCHMARKS,
+              split_manifest_path: str | Path | None = SPLIT_MANIFEST_PATH, global_seed: int = 0,
+              traces_dirs: Mapping[str, str | Path] | None = None,
+              **kwargs: Any) -> tuple[dict[str, tuple[pd.DataFrame, pd.DataFrame]], dict[str, Any]]:
+    """Extract every benchmark and write the *joint* `results/shared/split_manifest.json` (contract §1, §6: one
+    manifest naming the test episodes of both benchmarks, handed to the second team unchanged). Returns
+    `{benchmark: (episodes, documents)}` and the manifest; the manifest must pass `validate_split_manifest`
+    (design §3 shape) or the call fails. `traces_dirs` maps a benchmark to its log root (tests); other keyword
+    arguments go to `build_episode_documents` for every benchmark."""
+    frames = {b: build_episode_documents(cfg, b, traces_dir=(traces_dirs or {}).get(b), global_seed=global_seed, **kwargs)
+              for b in benchmarks}
+    episodes = [rec for eps, _ in frames.values() for rec in eps.to_dict("records")]
+    rule = L.contract_rule(cfg)
+    val_seed = seeds_for(cfg, global_seed)["subsample"]
+    if split_manifest_path is not None:
+        manifest = write_split_manifest(episodes, split_manifest_path, rule=rule, val_seed=val_seed)
+    else:
+        manifest = split_manifest(episodes, rule=rule, val_seed=val_seed)
+    problems = validate_split_manifest(manifest)
+    if problems:
+        raise ValueError("split manifest failed its shape check: " + "; ".join(problems[:5]))
+    return frames, manifest
+
+
+def _summary(benchmark: str, episodes: pd.DataFrame, documents: pd.DataFrame) -> dict[str, Any]:
+    return {"benchmark": benchmark, "episodes": int(len(episodes)), "documents": int(len(documents)),
+            "classes": episodes["episode_class"].value_counts().to_dict() if len(episodes) else {},
+            "contract_split": episodes["contract_split"].value_counts().to_dict() if len(episodes) else {},
+            "positive_documents": int(documents["label"].sum()) if len(documents) else 0}
+
+
 def main(argv: list[str] | None = None) -> int:
-    """`python -m flyguard.agentdojo_io.extract --benchmark agentdojo [--model M] [--episodes-out P]
-    [--documents-out P] [--split-manifest P]`: prints counts only (never document text)."""
+    """`python -m flyguard.agentdojo_io.extract --benchmark {agentdojo,agentdyn,all} [--model M] [--traces-dir D]
+    [--episodes-out P] [--documents-out P] [--split-manifest P]`: prints counts only (never document text).
+    `all` extracts both benchmarks and writes the joint `results/shared/split_manifest.json` (or
+    `--split-manifest`); for a single benchmark the split manifest is written only when a path is given."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--benchmark", required=True, choices=sorted(SOURCE_PREFIX))
+    ap.add_argument("--benchmark", required=True, choices=sorted(SOURCE_PREFIX) + ["all"])
     ap.add_argument("--model", default=None)
-    ap.add_argument("--traces-dir", default=None)
+    ap.add_argument("--traces-dir", default=None, help="log root of the one benchmark (not with `all`)")
     ap.add_argument("--episodes-out", default=None, help="optional parquet path for the episodes frame")
     ap.add_argument("--documents-out", default=None, help="optional parquet path for the documents frame")
-    ap.add_argument("--split-manifest", default=None, help="optional path for a contract split_manifest.json")
+    ap.add_argument("--split-manifest", default=None, help="path for the contract split_manifest.json")
     args = ap.parse_args(argv)
     cfg = load_configs()
-    episodes, documents = build_episode_documents(cfg, args.benchmark, model=args.model, traces_dir=args.traces_dir)
+    if args.benchmark == "all":
+        if args.traces_dir:
+            ap.error("--traces-dir applies to one benchmark; with `all` the roots come from the config")
+        frames, manifest = build_all(cfg, split_manifest_path=args.split_manifest or SPLIT_MANIFEST_PATH, model=args.model)
+        episodes = pd.concat([e for e, _ in frames.values()], ignore_index=True)
+        documents = pd.concat([d for _, d in frames.values()], ignore_index=True)
+        summary = {**_summary("all", episodes, documents),
+                   "per_benchmark": {b: _summary(b, e, d) for b, (e, d) in frames.items()},
+                   "split_manifest": {k: manifest["counts"].get(k) for k in ("test", "observation", "validation_clean",
+                                                                             "validation_attacks", "train_attacks",
+                                                                             "excluded", "error")}}
+    else:
+        episodes, documents = build_episode_documents(cfg, args.benchmark, model=args.model, traces_dir=args.traces_dir)
+        if args.split_manifest:
+            write_split_manifest(episodes.to_dict("records"), args.split_manifest, rule=L.contract_rule(cfg),
+                                 val_seed=seeds_for(cfg, 0)["subsample"])
+        summary = _summary(args.benchmark, episodes, documents)
     if args.episodes_out:
         Path(args.episodes_out).parent.mkdir(parents=True, exist_ok=True)
         episodes.to_parquet(args.episodes_out, index=False)
     if args.documents_out:
         Path(args.documents_out).parent.mkdir(parents=True, exist_ok=True)
         documents.to_parquet(args.documents_out, index=False)
-    if args.split_manifest:
-        from flyguard.agentdojo_io.contract import write_split_manifest
-        write_split_manifest(episodes.to_dict("records"), args.split_manifest, rule=L.contract_rule(cfg),
-                             val_seed=seeds_for(cfg, 0)["subsample"])
-    summary = {"benchmark": args.benchmark, "episodes": int(len(episodes)), "documents": int(len(documents)),
-               "classes": episodes["episode_class"].value_counts().to_dict() if len(episodes) else {},
-               "contract_split": episodes["contract_split"].value_counts().to_dict() if len(episodes) else {},
-               "positive_documents": int(documents["label"].sum()) if len(documents) else 0}
     print(json.dumps(summary, sort_keys=True))
     return 0
 

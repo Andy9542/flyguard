@@ -297,8 +297,10 @@ def split_manifest(episodes: Iterable[Mapping[str, Any]], rule: Mapping[str, Any
                 "test_episodes": f"clean runs of test tasks and `{rule.get('test_attack')}` attacks on them",
                 "excluded": f"`{rule.get('test_attack')}` on non-test tasks (held out of training and validation); "
                             "other templates on test tasks",
-                "validation": f"{rule.get('val_fraction')} of non-test tasks per benchmark and suite, deterministic "
-                              "from global seed 0 (child seed `subsample`)",
+                "validation": {b: L.validation_rule_text(b, rule) for b in ("agentdojo", "agentdyn")},
+                "val_seed_rule": "val_seed = child `subsample` of global seed 0; per (benchmark, suite) the task order is "
+                                 "numpy default_rng([val_seed, crc32('<benchmark>/<suite>')]).permutation over the "
+                                 "sorted non-test task ids (labels.val_task_ids)",
                 **({"val_seed": int(val_seed)} if val_seed is not None else {}), **rule}
     return {**lists, "rule": rule_out, "counts": counts}
 

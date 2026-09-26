@@ -40,6 +40,10 @@ def test_template_bases_prefer_logs_dedup_and_verify_composition(make_rt, T):
     strings = P.template_strings_from_logs(rt.paths.traces_dir, ["important_instructions"])
     assert list(strings) == [("important_instructions", "alpha", "injection_task_0")]
     assert strings[("important_instructions", "alpha", "injection_task_0")] == [T.LOG_STRING0]   # 2 logs x 2 vectors -> 1
+    # the trace logs are test material: one journal line per <model>/<suite> directory with the number of logs
+    # opened (the log under injection_task_5/ is not a user-task log and is not counted)
+    lines = [ln for ln in rt.paths.data_access_log.read_text(encoding="utf-8").splitlines() if "trace logs" in ln]
+    assert len(lines) == 1 and "\ttest\t" in lines[0] and "fake-model/alpha" in lines[0] and "of 2 trace logs" in lines[0]
 
 
 def test_deepset_bases_are_a_logged_test_read(make_rt, T):
@@ -53,19 +57,24 @@ def test_deepset_bases_are_a_logged_test_read(make_rt, T):
     assert bases == P.deepset_bases(rt)
 
 
-def test_build_bases_smoke_head_and_frozen_file(make_rt, T):
-    rt = make_rt(smoke=True)
-    bases, st = P.build_bases(rt, smoke=True)
-    assert st["existing"] is False and len(bases) == 3 and {b.kind for b in bases} == set(P.KINDS)
-    assert bases[0].base_id == "tmpl:important_instructions:alpha:injection_task_0" and bases[1].base_id == "deep_inj:0"
-    assert st["template_check"]["from_log"] == 1 and rt.paths.bases.parent.name == "smoke"
-    bases2, st2 = P.build_bases(rt, smoke=True)
-    assert st2["existing"] is True and [b.base_id for b in bases2] == [b.base_id for b in bases]
-    assert bases2[0].text == T.LOG_STRING0                         # newlines survive the JSONL round trip
+def test_build_bases_freezes_file_and_sidecar_and_never_rebuilds(make_rt, T):
+    rt = make_rt()
+    bases, st = P.build_bases(rt)
+    assert st["existing"] is False and len(bases) == 12 and {b.kind for b in bases} == set(P.KINDS)
+    assert bases[0].base_id == T.TMPL0 and bases[8].base_id == "deep_inj:0" and st["partial"] == []
+    assert st["template_check"] == {"composed_equals_log": 1, "composed_differs_from_log": 0, "from_log": 1, "composed": 7}
+    sidecar = json.loads(rt.paths.bases_check.read_text(encoding="utf-8"))
+    assert sidecar["template_check"] == st["template_check"] and sidecar["n"] == 12 and sidecar["partial"] == []
+    assert sidecar["by_kind"] == {"template": 8, "deepset_injection": 2, "deepset_benign": 2}
+    assert sidecar["by_origin"] == {"trace_log": 1, "composed": 7, "deepset_test": 4}
     recs = read_jsonl(rt.paths.bases)
     assert {"base_id", "source_id", "kind", "text", "attack", "suite", "injection_task", "origin"} <= set(recs[0])
-    full, _ = P.build_bases(make_rt())
-    assert len(full) == 12 and full[0].base_id == bases[0].base_id
+    # frozen: inputs that disappear later do not shrink the base set
+    rt.paths.deepset_test.unlink()
+    bases2, st2 = P.build_bases(rt)
+    assert st2["existing"] is True and [b.base_id for b in bases2] == [b.base_id for b in bases]
+    assert bases2[0].text == T.LOG_STRING0                         # newlines survive the JSONL round trip
+    assert [b.base_id for b in P.load_bases(rt)] == [b.base_id for b in bases]
 
 
 def test_interleave_kinds_round_robins():

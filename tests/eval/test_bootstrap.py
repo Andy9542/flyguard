@@ -7,8 +7,10 @@ import pytest
 from scipy.stats import norm
 from sklearn.metrics import roc_auc_score
 
+from flyguard.config import load_configs
 from flyguard.eval.bootstrap import (CI, WeightedAUC, auc_stat, cluster_bootstrap, cluster_codes, cluster_weights,
-                                     macro_auc_bootstrap, paired_cluster_bootstrap, two_stage_bootstrap_h3)
+                                     macro_auc_bootstrap, paired_cluster_bootstrap, percentile_ci,
+                                     two_stage_bootstrap_h3)
 from flyguard.eval.metrics import auc, macro_auc
 
 
@@ -70,7 +72,23 @@ def test_cluster_bootstrap_deterministic_and_covers_truth(source_factory):
     c = cluster_bootstrap(df, auc_stat("score"), n=100, seed=12)
     assert a.to_dict() == b.to_dict() and a.to_dict() != c.to_dict()
     assert a.n == 240 and a.n_clusters == 60 and a.n_boot == 100 and a.level == 0.95
-    assert set(a.to_dict()) == {"point", "low", "high", "level", "n_boot", "n", "n_clusters"}
+    assert set(a.to_dict()) == {"point", "low", "high", "level", "n_boot", "n_valid", "n", "n_clusters"}
+    assert a.n_valid == 100 and a.valid_share == 1.0
+
+
+def test_percentile_ci_reports_valid_draws():
+    """Draws with an undefined statistic are dropped from the quantiles but stay visible as n_boot − n_valid."""
+    s = np.array([np.nan] * 8 + [0.1, 0.3])
+    ci = percentile_ci(s, 0.2, 0.05, n=10)
+    assert ci.n_boot == 10 and ci.n_valid == 2 and ci.valid_share == pytest.approx(0.2)
+    assert ci.to_dict()["n_valid"] == 2 and ci.to_dict()["n_boot"] == 10
+    assert ci.low == pytest.approx(0.105) and ci.high == pytest.approx(0.295)
+    empty = percentile_ci(np.full(5, np.nan), 0.0, 0.05, n=3)
+    assert empty.n_valid == 0 and np.isnan(empty.low) and empty.to_dict()["low"] is None
+    # results dicts written before the field existed read back as fully valid
+    old = CI.from_dict({"point": 0.1, "low": 0.0, "high": 0.2, "n_boot": 50, "n": 5})
+    assert old.n_valid == 50 and old.to_dict()["n_valid"] == 50
+    assert CI(0.1, 0.0, 0.2).valid_share == 1.0
 
 
 def test_paired_bootstrap_identical_detectors_contains_zero(source_factory):
@@ -115,7 +133,9 @@ def test_two_stage_h3_shape_and_zero_difference(three_sources):
     r = two_stage_bootstrap_h3(docs, measured, nulls, n=50, seed=2)
     assert r["n_perms"] == 2 and r["n_null"] == 5
     zero = pytest.approx(0.0, abs=1e-12)
-    assert r["diff"].point == zero and r["diff"].low == zero and r["diff"].high == zero and r["diff"].level == 0.90
+    assert r["diff"].point == zero and r["diff"].low == zero and r["diff"].high == zero
+    assert r["diff"].level == pytest.approx(load_configs().default["stats"]["tost"]["ci"])  # TOST level from config
+    assert two_stage_bootstrap_h3(docs, measured, nulls, n=20, seed=2, alpha=0.05)["diff"].level == 0.95
     assert r["measured"].point == pytest.approx(r["null_mean"].point) == pytest.approx(r["delta_reference"])
     # noisy nulls: the interval is non-degenerate, deterministic per seed and has the measured mean inside
     nulls = {p: {s: measured[p][s][None, :] + rng.normal(0, 0.3, (5, len(measured[p][s]))) for s in three_sources}

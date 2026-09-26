@@ -123,6 +123,7 @@ def test_build_splits_invariants(cfg):
     e6 = set(s["bipia"]["e6_docs"]["val"]) | set(s["bipia"]["e6_docs"]["test"])
     assert e6 and not (e6 & (train | val | test))
     assert not (set(s["bipia"]["val_contexts"]) & set(s["bipia"]["test_contexts"]))
+    assert s["bipia"]["e6_role"]["in_c_unl"] is False and s["bipia"]["e6_role"]["dedup_reference_when_val"] is True
     err = docs[docs.meta.map(lambda m: m.get("episode_class") == "error")]["doc_id"]
     assert not (set(err) & test)
     assert s["rules"] == cfg.default["splits"]
@@ -137,8 +138,11 @@ def test_e3_folds(cfg):
     f = splits.build_e3_folds(dojo, eps, cfg)
     assert len(f["cross_template"]) == 4 and len(f["cross_suite"]) == 4 and len(f["double_holdout"]) == 16
     meta = {r.doc_id: r.meta for r in dojo.itertuples(index=False)}
-    for kind in f:
+    assert f["templates_present"] == cfg.default["traces"]["agentdojo"]["attacks"] and f["templates_missing"] == []
+    assert f["usable"] == {"cross_template": 4, "cross_suite": 4, "double_holdout": 16}
+    for kind in splits.E3_FOLD_KINDS:
         for fold in f[kind]:
+            assert fold["usable"] is True
             tr, te = set(fold["train"]), set(fold["test"])
             assert tr and te and not (tr & te)
             assert not any(meta[d]["episode_class"] == "error" for d in tr | te)
@@ -155,4 +159,23 @@ def test_e3_folds(cfg):
         assert {meta[d]["suite"] for d in fold["test"]} == {s}
         assert {meta[d]["attack"] for d in fold["test"] if meta[d]["attack"]} == {t}
         assert s not in {meta[d]["suite"] for d in fold["train"]} and t not in {meta[d]["attack"] for d in fold["train"]}
-    assert splits.build_e3_folds(dojo, None, cfg) == {"cross_template": [], "cross_suite": [], "double_holdout": []}
+    empty = splits.build_e3_folds(dojo, None, cfg)
+    assert all(empty[k] == [] for k in splits.E3_FOLD_KINDS) and empty["templates_missing"] == f["templates_present"]
+
+
+def test_e3_folds_flag_missing_templates(cfg):
+    """DEVIATIONS D6: with only important_instructions traces, the folds exist but most are not usable."""
+    dojo, eps = _dojo_docs()
+    keep = dojo.meta.map(lambda m: m["attack"] in (None, "important_instructions"))
+    dojo = dojo[keep].reset_index(drop=True)
+    dojo["split"] = "test"
+    eps = eps[eps.attack.isna() | (eps.attack == "important_instructions")]
+    f = splits.build_e3_folds(dojo, eps, cfg)
+    assert f["templates_present"] == ["important_instructions"]
+    assert f["templates_missing"] == ["tool_knowledge", "injecagent", "ignore_previous"]
+    assert len(f["cross_template"]) == 4 and len(f["double_holdout"]) == 16       # the ТЗ shape is kept
+    by_name = {x["fold"]: x for x in f["cross_template"]}
+    assert by_name["important_instructions"]["n_train_pos"] == 0 and not by_name["important_instructions"]["usable"]
+    assert all(by_name[t]["n_test_pos"] == 0 and not by_name[t]["usable"] for t in f["templates_missing"])
+    assert f["usable"]["cross_template"] == 0 and f["usable"]["cross_suite"] == 4 and f["usable"]["double_holdout"] == 0
+    assert f["usable_rule"] == splits.E3_USABLE_RULE

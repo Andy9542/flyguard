@@ -1,13 +1,17 @@
 """ТЗ 2.4 / 2.6: Bloom readout (active cells only, gamma = 0 saturation, balancing), linear readout, selection."""
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 import scipy.sparse as sp
 from sklearn.metrics import roc_auc_score
 
-from flyguard.readout import BloomReadout, LinearReadout, balance_indices, select_C, select_gamma
-from tests.model.conftest import random_codes
+from flyguard.config import load_configs
+from flyguard.readout import BloomReadout, LinearReadout, balance_indices, make_logistic, select_C, select_gamma
+
+from .conftest import random_codes  # relative: ``tests`` is not a package, so ``tests.model`` fails under plain pytest
 
 M_CELLS, K = 400, 20  # k = 5 % of m
 
@@ -143,6 +147,27 @@ def test_linear_readout_fits_scores_and_is_deterministic():
         LinearReadout().fit(Ztr, np.zeros(100, int))
     with pytest.raises(RuntimeError):
         LinearReadout().score(Zva)
+
+
+def test_make_logistic_is_the_configured_estimator_and_shared_by_the_readout():
+    """One factory for MBON, LRSvd and TF-IDF+LR (H1b pairs): every setting comes from readout.linear."""
+    lin = load_configs().default["readout"]["linear"]
+    est = make_logistic(0.1, 7)
+    p = est.get_params()
+    assert p["solver"] == lin["solver"] and p["max_iter"] == lin["max_iter"] and p["tol"] == lin["tol"]
+    assert p["class_weight"] == lin["class_weight"] and p["C"] == 0.1 and p["random_state"] == 7
+    assert p["l1_ratio"] == {"l2": 0.0, "l1": 1.0}[lin["penalty"]] and p["penalty"] == "deprecated"  # never passed
+    m, k, Ztr, ytr, Zva, yva = make_linear_problem()
+    lr = LinearReadout(C=0.1, seed=7).fit(Ztr, ytr)
+    assert lr.model_.get_params() == p                          # the readout fits exactly this estimator
+    ref = make_logistic(0.1, 7).fit(Ztr, ytr)
+    assert np.allclose(ref.predict_proba(Zva)[:, 1], lr.score(Zva), atol=1e-6)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        make_logistic(1.0, 0).fit(Ztr, ytr)
+    assert not [w for w in caught if issubclass(w.category, FutureWarning)]
+    with pytest.raises(ValueError):
+        make_logistic(0.0, 0)
 
 
 def test_select_gamma_and_select_c_use_validation_auc():

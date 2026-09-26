@@ -1,0 +1,47 @@
+2026-09-26T10:27:02Z	test	data/raw/deepset/test.parquet	paraphrase fix-pass agent: pandas read of the label column only (row/label counts: 116 rows, 60/56), no text opened; logged after the fact
+2026-09-26T10:32:06Z	train	data/raw/deepset/train.parquet	paraphrase fix-pass agent: chi2 extension probe (tokens only)
+2026-09-26T10:38:35Z	test	data/traces	retroactive record, written 2026-09-26 in the review fix pass of agentdojo_io: during the wave-1 implementation agentdojo_io.extract was dry-run once over all frozen deepseek-v4-pro logs of both benchmarks (contract-test tasks included; counts only, no manifest written, tool outputs never printed) to measure span recovery; that read was not journalled at the time
+2026-09-26T10:38:35Z	test	data/traces/agentdojo/deepseek-v4-pro/banking	agentdojo_io.extract agentdojo: 160 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:38:35Z	test	data/traces/agentdojo/deepseek-v4-pro/slack	agentdojo_io.extract agentdojo: 126 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:38:35Z	test	data/traces/agentdojo/deepseek-v4-pro/travel	agentdojo_io.extract agentdojo: 160 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:38:35Z	test	data/traces/agentdojo/deepseek-v4-pro/workspace	agentdojo_io.extract agentdojo: 600 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:38:56Z	test	data/traces/agentdyn/deepseek-v4-pro/dailylife	agentdojo_io.extract agentdyn: 90 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:38:56Z	test	data/traces/agentdyn/deepseek-v4-pro/github	agentdojo_io.extract agentdyn: 83 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:38:56Z	test	data/traces/agentdyn/deepseek-v4-pro/shopping	agentdojo_io.extract agentdyn: 83 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:39:45Z	test	data/traces/agentdojo/deepseek-v4-pro/banking	agentdojo_io.extract agentdojo: 160 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:39:45Z	test	data/traces/agentdojo/deepseek-v4-pro/slack	agentdojo_io.extract agentdojo: 126 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:39:45Z	test	data/traces/agentdojo/deepseek-v4-pro/travel	agentdojo_io.extract agentdojo: 160 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:39:45Z	test	data/traces/agentdojo/deepseek-v4-pro/workspace	agentdojo_io.extract agentdojo: 600 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:40:10Z	test	data/traces/agentdyn/deepseek-v4-pro/dailylife	agentdojo_io.extract agentdyn: 90 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:40:10Z	test	data/traces/agentdyn/deepseek-v4-pro/github	agentdojo_io.extract agentdyn: 83 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:40:10Z	test	data/traces/agentdyn/deepseek-v4-pro/shopping	agentdojo_io.extract agentdyn: 83 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:41:18Z	test	data/traces/agentdojo/deepseek-v4-pro/banking	agentdojo_io.extract agentdojo: 160 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:41:18Z	test	data/traces/agentdojo/deepseek-v4-pro/slack	agentdojo_io.extract agentdojo: 126 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:41:18Z	test	data/traces/agentdojo/deepseek-v4-pro/travel	agentdojo_io.extract agentdojo: 160 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:41:18Z	test	data/traces/agentdojo/deepseek-v4-pro/workspace	agentdojo_io.extract agentdojo: 600 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:41:41Z	test	data/traces/agentdyn/deepseek-v4-pro/dailylife	agentdojo_io.extract agentdyn: 90 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:41:41Z	test	data/traces/agentdyn/deepseek-v4-pro/github	agentdojo_io.extract agentdyn: 83 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:41:41Z	test	data/traces/agentdyn/deepseek-v4-pro/shopping	agentdojo_io.extract agentdyn: 83 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T10:50:29Z	test	data/raw/deepset/test.parquet	flyguard.data.loaders.load_deepset: build documents
+2026-09-26T10:50:29Z	test	data/raw/bipia/text_attack_test.json	flyguard.data.loaders.bipia_attacks: email
+2026-09-26T10:50:29Z	test	data/raw/bipia/email/test.jsonl	flyguard.data.loaders.bipia_contexts: email
+2026-09-26T10:50:29Z	test	data/raw/bipia/text_attack_test.json	flyguard.data.loaders.bipia_attacks: table
+2026-09-26T10:50:29Z	test	data/raw/bipia/table/test.jsonl	flyguard.data.loaders.bipia_contexts: table
+2026-09-26T10:50:30Z	test	data/raw/bipia/code_attack_test.json	flyguard.data.loaders.bipia_attacks: code
+2026-09-26T10:50:30Z	test	data/raw/bipia/code/test.jsonl	flyguard.data.loaders.bipia_contexts: code
+2026-09-26T10:50:31Z	test	data/raw/notinject/NotInject_one.json	flyguard.data.loaders.load_notinject: build documents
+2026-09-26T10:50:31Z	test	data/raw/notinject/NotInject_two.json	flyguard.data.loaders.load_notinject: build documents
+2026-09-26T10:50:31Z	test	data/raw/notinject/NotInject_three.json	flyguard.data.loaders.load_notinject: build documents
+2026-09-26T10:51:00Z	external	data/raw/piguard_train/train.json	flyguard.data.audit.contamination_audit: third-party training set (PIGuard) read for the ТЗ 3.2 overlap counts; texts never printed
+2026-09-26T10:55:22Z	test	data/processed/documents.parquet	data fix pass: smoke_subset composition check on the built documents (counts only, no text printed)
+2026-09-26T10:55:39Z	test	data/raw/deepset/test.parquet	flyguard.data.loaders.load_deepset: build documents
+2026-09-26T10:55:39Z	test	data/raw/bipia/text_attack_test.json	flyguard.data.loaders.bipia_attacks: email
+2026-09-26T10:55:39Z	test	data/raw/bipia/email/test.jsonl	flyguard.data.loaders.bipia_contexts: email
+2026-09-26T10:55:39Z	test	data/raw/bipia/text_attack_test.json	flyguard.data.loaders.bipia_attacks: table
+2026-09-26T10:55:39Z	test	data/raw/bipia/table/test.jsonl	flyguard.data.loaders.bipia_contexts: table
+2026-09-26T10:55:40Z	test	data/raw/bipia/code_attack_test.json	flyguard.data.loaders.bipia_attacks: code
+2026-09-26T10:55:40Z	test	data/raw/bipia/code/test.jsonl	flyguard.data.loaders.bipia_contexts: code
+2026-09-26T10:55:40Z	test	data/raw/notinject/NotInject_one.json	flyguard.data.loaders.load_notinject: build documents
+2026-09-26T10:55:40Z	test	data/raw/notinject/NotInject_two.json	flyguard.data.loaders.load_notinject: build documents
+2026-09-26T10:55:40Z	test	data/raw/notinject/NotInject_three.json	flyguard.data.loaders.load_notinject: build documents
+2026-09-26T10:56:08Z	external	data/raw/piguard_train/train.json	flyguard.data.audit.contamination_audit: third-party training set (PIGuard) read for the ТЗ 3.2 overlap counts; texts never printed

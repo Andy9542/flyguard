@@ -51,6 +51,17 @@ def test_threshold_for_fpr_respects_target_and_ties():
     assert threshold_for_fpr(neg, 1.0) == pytest.approx(0.1)
 
 
+def test_threshold_for_fpr_sits_at_a_pool_score():
+    """Documented convention (as sklearn's roc_curve thresholds): τ is a negative-pool score, so positives lying
+    strictly between two consecutive pool scores are not caught although a lower τ would keep the same pool FPR."""
+    neg = np.array([0.1] * 90 + [0.5] * 10)
+    pos = np.array([0.3] * 50 + [0.6] * 50)
+    tpr, tau = tpr_at_fpr(pos, neg, 0.10)
+    assert tau == pytest.approx(0.5) and tpr == pytest.approx(0.5)
+    lower = np.nextafter(0.1, np.inf)
+    assert fpr_at_threshold(neg, lower) == pytest.approx(0.10) and tpr_at_threshold(pos, lower) == 1.0
+
+
 def test_tpr_at_fpr_monotone_in_fpr():
     rng = np.random.default_rng(2)
     neg = rng.normal(size=3000)
@@ -96,3 +107,21 @@ def test_doc_scores_max_over_non_excluded_windows():
     # without a dedup column nothing is excluded
     out2 = doc_scores(scores, windows.drop(columns=["dedup_excluded"])).set_index("doc_id")
     assert out2.loc["a", "score"] == pytest.approx(0.99) and out2.loc["c", "score"] == pytest.approx(0.8)
+
+
+def test_doc_scores_refuses_unscored_windows():
+    """A window without a score must not silently lower the maximum or make its document vanish."""
+    windows = pd.DataFrame({"window_id": ["a#w0", "a#w1", "b#w0", "c#w0"], "doc_id": ["a", "a", "b", "c"],
+                            "dedup_excluded": [False, False, False, True]})
+    partial = pd.DataFrame({"window_id": ["a#w0", "z#w0"], "score": [0.2, 0.9]})  # a#w1 and b#w0 unscored
+    with pytest.raises(ValueError, match="2 of 3"):
+        doc_scores(partial, windows)
+    with pytest.warns(RuntimeWarning, match="2 documents"):
+        out = doc_scores(partial, windows, strict=False).set_index("doc_id")
+    assert list(out.index) == ["a"] and out.loc["a", "score"] == pytest.approx(0.2)
+    # an excluded window needs no score; scores of unknown windows are ignored
+    full = pd.DataFrame({"window_id": ["a#w0", "a#w1", "b#w0", "z#w0"], "score": [0.2, 0.5, 0.7, 0.9]})
+    out = doc_scores(full, windows).set_index("doc_id")
+    assert out.loc["a", "score"] == pytest.approx(0.5) and "c" not in out.index
+    with pytest.raises(ValueError, match="duplicated"):
+        doc_scores(pd.concat([full, full.iloc[:1]]), windows)

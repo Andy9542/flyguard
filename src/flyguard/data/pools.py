@@ -1,8 +1,11 @@
 """Negative pools P_val / P_test (ТЗ 1.8; docs/design.md §2) -> ``pools.json``.
 
 P_val feeds the frozen FPR threshold (ТЗ 2.5), so it may only contain documents that are not test material:
-benign deepset *validation* documents (the train part trains the detectors and would make the threshold
-optimistic), BIPIA validation clean documents, clean AgentDojo outputs of validation tasks. P_test is the FPR
+benign deepset documents, BIPIA validation clean documents, clean AgentDojo outputs of validation tasks. Which
+benign deepset documents enter P_val is the switch ``pools.p_val_deepset`` (default ``val``): ТЗ 1.8 literally says
+"the benign part of deepset train", design §2 narrows it to the *validation* 20 % because the train part fits the
+detectors and would make the threshold optimistic (review finding: the narrowing is a deviation the orchestrator
+journals in DEVIATIONS.md; ``train`` restores the literal reading). The choice is cited in ``pools.json``. P_test is the FPR
 carrier of the final run: benign deepset test, BIPIA test clean, clean AgentDojo outputs of the remaining tasks,
 clean AgentDyn outputs and the negative paraphrases. NotInject is a separate FPR set, not part of P_test.
 """
@@ -14,8 +17,10 @@ from typing import Any
 import pandas as pd
 
 BENIGN_ATTACKS = (None, "", "none", "None")
-P_VAL_DEFINITION = ("benign deepset val + BIPIA val clean + clean AgentDojo outputs (benign episodes) of validation "
-                    "tasks (crc32(user_task) % 5 == 0)")
+P_VAL_DEEPSET_MODES = {"val": "benign deepset val (the stratified 20 % of deepset train; design §2)",
+                       "train": "benign deepset train, whole (train + val roles; ТЗ 1.8 literal)"}
+P_VAL_DEFINITION = ("{deep} + BIPIA val clean + clean AgentDojo outputs (benign episodes) of validation "
+                    "tasks (crc32(user_task) % 5 == 0); deepset part per pools.p_val_deepset={mode}")
 P_TEST_DEFINITION = ("benign deepset test + BIPIA test clean + clean AgentDojo outputs of the remaining tasks + clean "
                      "AgentDyn outputs + negative paraphrases")
 
@@ -24,6 +29,14 @@ def _meta(documents: pd.DataFrame) -> list[dict[str, Any]]:
     if "meta" in documents.columns:
         return [m if isinstance(m, dict) else (json.loads(m) if m else {}) for m in documents["meta"]]
     return [json.loads(m) if m else {} for m in documents["meta_json"]]
+
+
+def p_val_deepset_mode(cfg: Any) -> str:
+    """``pools.p_val_deepset`` (``val`` when the key is absent); anything else is a config error."""
+    mode = str((cfg.default.get("pools") or {}).get("p_val_deepset", "val"))
+    if mode not in P_VAL_DEEPSET_MODES:
+        raise ValueError(f"pools.p_val_deepset={mode!r}; expected one of {sorted(P_VAL_DEEPSET_MODES)}")
+    return mode
 
 
 def pool_frame(documents: pd.DataFrame, dropped: set[str] | None = None) -> pd.DataFrame:
@@ -44,7 +57,9 @@ def build_pools(documents: pd.DataFrame, cfg: Any, dropped: set[str] | None = No
     """``pools.json`` (ТЗ 1.8): composition and sizes by source, target >= ``pools.target_min_docs`` documents."""
     df = pool_frame(documents, dropped)
     neg = df["label"] == 0
-    p_val = df[neg & (((df["source"] == "deep") & (df["split"] == "val"))
+    mode = p_val_deepset_mode(cfg)
+    deep_roles = ("val",) if mode == "val" else ("train", "val")
+    p_val = df[neg & (((df["source"] == "deep") & df["split"].isin(deep_roles))
                       | ((df["source"] == "bipia") & (df["split"] == "val"))
                       | ((df["source"] == "dojo") & (df["split"] == "val") & df["clean_trace"]))]
     p_test = df[neg & (((df["source"] == "deep") & (df["split"] == "test"))
@@ -61,5 +76,6 @@ def build_pools(documents: pd.DataFrame, cfg: Any, dropped: set[str] | None = No
                 "meets_target": len(ids) >= target, "shortfall": max(0, target - len(ids)), "doc_ids": ids}
 
     ni = df[df["source"] == "notinject"]
-    return {"p_val": pack(p_val, P_VAL_DEFINITION), "p_test": pack(p_test, P_TEST_DEFINITION),
+    p_val_def = P_VAL_DEFINITION.format(deep=P_VAL_DEEPSET_MODES[mode], mode=mode)
+    return {"p_val": {**pack(p_val, p_val_def), "p_val_deepset": mode}, "p_test": pack(p_test, P_TEST_DEFINITION),
             "notinject": {"n": int(len(ni)), "note": "separate FPR set (ТЗ Этап 4), not part of P_test"}}

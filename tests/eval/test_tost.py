@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from flyguard.config import load_configs
 from flyguard.eval.bootstrap import CI
 from flyguard.eval.tost import (bootstrap_p, equivalence_margin, holm, holm_reject, p_from_ci, randomization_p,
                                 tost, tost_equivalent)
@@ -55,6 +56,10 @@ def test_randomization_p_on_known_nulls():
     assert randomization_p(10.0, nulls) == pytest.approx(21 / 101)
     # literal formula with pre-centred statistics (center=0)
     assert randomization_p(0.5, [0.1, 0.2, 0.6, -0.7], center=0.0) == pytest.approx(3 / 5)
+    # the default sidedness is stats.randomization.two_sided of configs/default.yaml
+    cfg = load_configs()
+    assert randomization_p(91.0, nulls) == randomization_p(91.0, nulls,
+                                                           two_sided=cfg.default["stats"]["randomization"]["two_sided"])
     # one-sided
     assert randomization_p(91.0, nulls, two_sided=False, alternative="greater") == pytest.approx(11 / 101)
     assert randomization_p(10.0, nulls, two_sided=False, alternative="less") == pytest.approx(11 / 101)

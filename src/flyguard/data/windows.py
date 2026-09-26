@@ -7,7 +7,7 @@ span, or the whole span when the span is shorter; span-less sources pass the doc
 from __future__ import annotations
 
 import json
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import pandas as pd
 import xxhash
@@ -71,19 +71,37 @@ def window_label(start: int, end: int, spans: Sequence[Any] | None, min_span_cha
     return 0
 
 
-def text_hash(text: str) -> str:
-    """xxhash64 hex of the window text: key of the transformer score caches (design §2, §6)."""
-    return xxhash.xxh64(text.encode("utf-8")).hexdigest()
+TEXT_HASH_ALGO = "xxhash64"
+TEXT_HASH_DEFAULTS = {"algo": TEXT_HASH_ALGO, "seed": 0, "encoding": "utf-8"}
+
+
+def text_hash(text: str, seed: int = 0, encoding: str = "utf-8") -> str:
+    """xxhash64 hex of the window text: THE key of the score caches (design §2, §6; ASSUMPTIONS A17).
+
+    The single definition of ``configs/default.yaml`` ``windows.text_hash`` {algo xxhash64, seed 0, utf-8};
+    baselines import this function. The defaults equal the config so cfg-less callers get the same key;
+    :func:`text_hash_from_cfg` binds the config values and refuses an unknown algorithm.
+    """
+    return xxhash.xxh64(text.encode(encoding), seed=int(seed)).hexdigest()
+
+
+def text_hash_from_cfg(cfg: Any) -> Callable[[str], str]:
+    """``text_hash`` bound to ``cfg.default['windows']['text_hash']`` (design §2: one cache key everywhere)."""
+    spec = dict(TEXT_HASH_DEFAULTS, **((cfg.default.get("windows") or {}).get("text_hash") or {}))
+    if str(spec["algo"]) != TEXT_HASH_ALGO:
+        raise ValueError(f"windows.text_hash.algo={spec['algo']!r} is not supported; only {TEXT_HASH_ALGO}")
+    seed, encoding = int(spec["seed"]), str(spec["encoding"])
+    return lambda text: text_hash(text, seed, encoding)
 
 
 def windows_for_document(doc_id: str, text: str, spans: Sequence[Any] | None, doc_label: int, size: int,
-                         stride: int, min_span_chars: int) -> list[dict[str, Any]]:
+                         stride: int, min_span_chars: int, hasher: Callable[[str], str] = text_hash) -> list[dict[str, Any]]:
     """Rows of ``windows.parquet`` for one document (window_id = ``<doc_id>#w<k>``)."""
     rows = []
     for k, (s, e) in enumerate(make_windows(text, size, stride)):
         wtext = text[s:e]
         rows.append({"window_id": f"{doc_id}#w{k}", "doc_id": doc_id, "start": s, "end": e, "text": wtext,
-                     "label": window_label(s, e, spans, min_span_chars, doc_label), "text_hash": text_hash(wtext)})
+                     "label": window_label(s, e, spans, min_span_chars, doc_label), "text_hash": hasher(wtext)})
     return rows
 
 
@@ -95,10 +113,11 @@ def build_windows(documents: pd.DataFrame, cfg: Any) -> pd.DataFrame:
     """
     w = cfg.default["windows"]
     size, stride, min_span = int(w["size"]), int(w["stride"]), int(w["min_span_chars"])
+    hasher = text_hash_from_cfg(cfg)
     rows: list[dict[str, Any]] = []
     cols = documents[["doc_id", "source", "split", "label", "text", "spans", "cluster_id"]]
     for doc_id, source, split, label, text, spans, cluster_id in cols.itertuples(index=False, name=None):
-        for r in windows_for_document(doc_id, text, spans, int(label), size, stride, min_span):
+        for r in windows_for_document(doc_id, text, spans, int(label), size, stride, min_span, hasher):
             r.update({"source": source, "split": split, "cluster_id": cluster_id, "dedup_excluded": False,
                       "dup_of": None})
             rows.append(r)

@@ -140,3 +140,46 @@ def test_no_reference_windows_means_nothing_excluded(cfg):
     windows = build_windows(docs, cfg)
     out, dropped, report = dedup_windows(docs, windows, cfg)
     assert not out.dedup_excluded.any() and not dropped and report["test_windows_excluded"] == 0
+
+
+def _mutate(rng: random.Random, base: str, k: int) -> str:
+    alphabet = "abcdefghijklmnopqrstuvwxyz "
+    t = list(base)
+    for _ in range(k):
+        t[rng.randrange(len(t))] = rng.choice(alphabet)
+    return "".join(t)
+
+
+def test_lsh_banding_recalls_every_pair_just_above_threshold(cfg):
+    """Review finding: datasketch's balanced banding at threshold 0.8 (b=9, r=13) surfaced only ~40 % of pairs at
+    J=0.80. The index must find every pair with exact J in [0.80, 0.85), and the rule must record the banding."""
+    from flyguard.data.dedup import LSH_RECALL, NearDuplicateIndex, candidate_probability, lsh_params
+
+    d = cfg.default["dedup"]
+    thr, perm = float(d["jaccard"]), int(d["minhash_perm"])
+    b, r = lsh_params(perm, thr)
+    assert b * r <= perm and candidate_probability(thr, b, r) >= LSH_RECALL
+    assert candidate_probability(0.3, b, r) < 0.1                     # still few spurious candidates
+    rng = random.Random(0)
+    rows, truth = [], {}
+    while len(truth) < 300:
+        base = "".join(rng.choice("abcdefghijklmnopqrstuvwxyz ") for _ in range(256))
+        test = _mutate(rng, base, rng.randint(1, 12))
+        j = jaccard(char_shingles(base, 5), char_shingles(test, 5))
+        if not (thr <= j < thr + 0.05):
+            continue
+        i = len(truth)
+        rows += [{"window_id": f"ref{i}", "split": "train", "label": 0, "text": base},
+                 {"window_id": f"tst{i}", "split": "test", "label": 0, "text": test}]
+        truth[f"tst{i}"] = f"ref{i}"
+    found = find_test_duplicates(pd.DataFrame(rows), d["shingle"], perm, thr)
+    assert found == truth                                             # all 300 excluded, each to its own reference
+    idx = NearDuplicateIndex(d["shingle"], perm, thr)
+    assert (idx.b, idx.r) == (b, r) and idx.rule()["lsh_bands"] == b and idx.rule()["lsh_rows"] == r
+    assert idx.add("a", rows[0]["text"]) and not idx.add("empty", "")
+    assert idx.best(rows[1]["text"]) == ("a", jaccard(char_shingles(rows[0]["text"], 5), char_shingles(rows[1]["text"], 5)))
+    assert idx.query("x" * 256) == []
+    docs = _corpus()
+    _, _, report = dedup_windows(docs, build_windows(docs, cfg), cfg)
+    assert report["rule"]["lsh_bands"] == b and report["rule"]["lsh_rows"] == r
+    assert report["rule"]["candidate_recall_at_threshold"] >= LSH_RECALL

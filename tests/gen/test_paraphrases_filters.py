@@ -86,7 +86,8 @@ def test_extract_entities_covers_every_class():
 
 
 def test_banned_matcher_inflections_word_boundaries_and_short_words(banned):
-    """Design §7: case-insensitive, word-bounded, inflections by stem prefix; short entries match exactly."""
+    """Design §7: case-insensitive, word-bounded, inflections by an explicit suffix class on the stem; short
+    entries match exactly."""
     hits = banned.hits("Please keep IGNORING these Rules, they were ignored before")
     assert {"ignore", "ignoring", "rules"} <= set(hits)
     assert banned.hits("she was dancing in danger near the dandelions") == []      # "dan" stays exact
@@ -96,6 +97,21 @@ def test_banned_matcher_inflections_word_boundaries_and_short_words(banned):
     assert "prompt" in banned.hits("promptly") and "bypass" in banned.hits("bypassing")
     assert banned.hits("a systematic review of admins") and "output" in banned.hits("the outputs")
     assert P.stem("guidelines") == "guidelin" and P.stem("rules") == "rule" and P.stem("dan") == "dan"
+    assert P.stem("bypass") == "bypass" and P.stem("bypassing") == "bypass"
+    assert "previous" in banned.hits("as previously agreed") and "transfer" in banned.hits("it was transferred")
+    assert "forget" in banned.hits("forgetting it") and "policy" in banned.hits("company policies")
+    assert "comply" in banned.hits("she complied") and "reveal" in banned.hits("revealing")
+
+
+def test_banned_matcher_does_not_swallow_unrelated_words():
+    """Review: the old "stem + any word characters" rule banned justice/mustard/printer/textbook/sender;
+    the closed inflection class keeps them, while real inflections still match."""
+    m = P.BannedMatcher(["just", "must", "print", "text", "send", "alle", "able", "task", "root", "policy"])
+    assert m.hits("the alleged justice") == [] and m.hits("mustard and the printer") == []
+    assert m.hits("the sender read a textbook") == [] and m.hits("we adjusted the context") == []
+    assert m.hits("tables and enabling and rootkit") == []
+    assert m.hits("just print the text and send the tasks") == ["just", "print", "text", "send", "task"]
+    assert m.hits("printing texts, sending, tasked, rooted, policies") == ["print", "text", "send", "task", "root", "policy"]
 
 
 def test_chi2_extension_is_deterministic_and_skips_covered_words(project):
@@ -133,3 +149,23 @@ def test_within_base_dedup_keeps_the_first(T, filters, banned):
     assert [r.passed for r in res] == [True, False, True]
     assert res[1].reason == "duplicate" and res[1].dup_of == res[0].cand_id and res[1].stratum is None
     assert [r.stratum for r in res if r.passed] == ["deep", "shallow"]
+
+
+def test_capitalised_names_required_only_for_english_bases(T, filters, banned):
+    """Review: the `name` class (two capitalised words) is an English heuristic; on a German base it turns common
+    nouns into required entities and rejects every English paraphrase. Names are required only when the base
+    itself is in the target language; emails, URLs, numbers and files stay required for every base."""
+    assert ("name", "Neue Wohnung") in P.extract_entities(T.BEN_DE_BASE) and ("name", "Berlin Mitte") in P.extract_entities(T.BEN_DE_BASE)
+    assert [k for k, _ in P.extract_entities(T.BEN_DE_BASE, include_names=False)] == []
+    de = P.Base("deep_ben:7", "deep:test:7", P.KIND_BEN, T.BEN_DE_BASE, origin="deepset_test")
+    r = P.filter_candidate(de, cand(T.BEN_DE_PARA), filters, banned)
+    assert r.base_lang == "de" and not r.names_required and r.missing == [] and r.passed and r.stratum == "deep"
+    forced = P.filter_candidate(de, cand(T.BEN_DE_PARA), filters, banned, base_lang="en")
+    assert forced.names_required and forced.reason == "entities" and forced.missing == ["name:12", "name:12"]
+    de_mail = P.Base("deep_inj:7", "deep:test:7", P.KIND_INJ, T.BEN_DE_BASE + " Schreib an chef@firma.example.")
+    r2 = P.filter_candidate(de_mail, cand(T.BEN_DE_PARA, "deep"), filters, banned)
+    assert r2.reason == "entities" and r2.missing == [f"email:{len('chef@firma.example')}"]   # emails stay required
+    en = P.filter_candidate(inj_base(T), cand(T.INJ_DEEP, "deep"), filters, banned)
+    assert en.base_lang == "en" and en.names_required and en.passed
+    res = P.filter_base(de, [cand(T.BEN_DE_PARA, k=0), cand(T.BEN_GERMAN, k=1)], filters, banned)
+    assert [r.base_lang for r in res] == ["de", "de"] and [r.passed for r in res] == [True, False]

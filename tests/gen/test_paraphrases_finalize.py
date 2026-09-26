@@ -26,9 +26,11 @@ def rows_by_base(rt):
 
 
 def test_end_to_end_with_fake_transport(make_rt, T):
-    rt = make_rt(smoke=True)
-    out = P.run_all(rt, smoke=True)
-    assert out["stopped"] is None and out["processed"] == 3
+    rt = make_rt()
+    T.freeze_three(rt)
+    out = P.run_all(rt)
+    assert out["stopped"] is None and out["processed"] == 3 and out["bases"]["existing"] is True
+    assert rt.spend_json_calls == [rt.cfg]                                        # results/spend.json refreshed
     rows, by = rows_by_base(rt)
     assert list(rows[0]) == P.CSV_COLUMNS and len(rows) == 8
     inj, ben, tmpl = by["deep_inj:0"], by["deep_ben:1"], by[TMPL0]
@@ -50,8 +52,8 @@ def test_end_to_end_with_fake_transport(make_rt, T):
     assert Counter(f["reason"] for f in filtered if not f["passed"]) == {"duplicate": 10, "language": 2, "length": 2}
     assert sum(f["demoted"] for f in filtered) == 1
     csv_bytes = rt.paths.csv.read_bytes()
-    rt2 = make_rt(smoke=True, transport=T.FakeTransport())
-    out2 = P.run_all(rt2, smoke=True)
+    rt2 = make_rt(transport=T.FakeTransport())
+    out2 = P.run_all(rt2)
     assert rt2.transport.calls == [] and out2["processed"] == 0 and rt2.paths.csv.read_bytes() == csv_bytes
 
 
@@ -75,12 +77,13 @@ def test_selection_is_deterministic_and_represents_strata_and_generators():
 
 
 def test_finalize_twice_same_seed_identical_and_seed_recorded(make_rt, T):
-    rt = make_rt(smoke=True)
-    P.run_all(rt, smoke=True)
+    rt = make_rt()
+    T.freeze_three(rt)
+    P.run_all(rt)
     a = rt.paths.csv.read_bytes()
     st = P.finalize_stage(rt)
     assert rt.paths.csv.read_bytes() == a and st["seed_paraphrase"] == seeds_for(rt.cfg, 0)["paraphrase"]
-    rt1 = make_rt(smoke=True, seed=1, transport=T.FakeTransport())
+    rt1 = make_rt(seed=1, transport=T.FakeTransport())
     st1 = P.finalize_stage(rt1)
     assert st1["selected"] == 8 and st1["seed_paraphrase"] == seeds_for(rt1.cfg, 1)["paraphrase"]
     assert {r["text"] for r in rows_by_base(rt1)[0]} == {r["text"] for r in rows_by_base(rt)[0]}   # ≤ 5 accepted: same set
@@ -91,8 +94,9 @@ def test_two_judges_require_unanimity(make_rt, T):
     reject = P.normalize_text(T.INJ_DEEP)
     judge = lambda base, cand, model: {"accept": not (model == T.JUDGE_B and cand == reject), "confidence": 0.8}  # noqa: E731
     judges = [{"provider": "fake", "model": T.JUDGE}, {"provider": "fake", "model": T.JUDGE_B}]
-    rt = make_rt(smoke=True, judges=judges, transport=T.FakeTransport(judge=judge))
-    P.run_all(rt, smoke=True)
+    rt = make_rt(judges=judges, transport=T.FakeTransport(judge=judge))
+    T.freeze_three(rt)
+    P.run_all(rt)
     rows, by = rows_by_base(rt)
     assert {r["text"] for r in by["deep_inj:0"]} == {T.INJ_SHALLOW, T.INJ_DEEP_BANNED} and len(rows) == 7
     m = json.loads(rt.paths.manifest.read_text(encoding="utf-8"))
@@ -111,22 +115,24 @@ def test_judge_refusals_are_counted_not_accepted(make_rt, T):
         if cand == typed:
             return {"raw": '{"meaning_preserved": "true", "contains_instruction_to_ai": false, "confidence": 0.9}'}
         return {"accept": True, "confidence": 0.7}
-    rt = make_rt(smoke=True, transport=T.FakeTransport(judge=judge))
-    P.run_all(rt, smoke=True)
+    rt = make_rt(transport=T.FakeTransport(judge=judge))
+    T.freeze_three(rt)
+    P.run_all(rt)
     rows, by = rows_by_base(rt)
     assert T.INJ_SHALLOW not in {r["text"] for r in rows} and T.BEN_DEEP not in {r["text"] for r in rows}
     assert len(rows) == 6 and {r["stratum"] for r in by["deep_ben:1"]} == {"shallow"}
     m = json.loads(rt.paths.manifest.read_text(encoding="utf-8"))
     assert m["counts"]["judge_refusal_reasons"] == {"json_invalid": 1, "schema": 1}
     assert m["rates"]["judge_refusal"]["by_judge"][T.JUDGE] == {"n": 8, "refusals": 2, "rate": 0.25}
-    rt2 = make_rt(smoke=True, transport=T.FakeTransport())
-    P.run_all(rt2, smoke=True)
+    rt2 = make_rt(transport=T.FakeTransport())
+    P.run_all(rt2)
     assert rt2.transport.calls == []                                            # refusals are final, not retried
 
 
 def test_manifest_shape_and_rates(make_rt, T):
-    rt = make_rt(smoke=True)
-    P.run_all(rt, smoke=True)
+    rt = make_rt()
+    T.freeze_three(rt)
+    P.run_all(rt)
     m = json.loads(rt.paths.manifest.read_text(encoding="utf-8"))
     assert {"generated", "seed", "provider", "models", "dates", "prompts_sha256", "banned_words", "fill_strings",
             "filters", "counts", "rates", "judge_agreement", "spend", "files"} <= set(m)
@@ -151,7 +157,20 @@ def test_manifest_shape_and_rates(make_rt, T):
     assert r["acceptance"]["by_stratum"]["deep"]["rate"] == 1.0 and set(r["acceptance"]["by_kind"]) == set(P.KINDS)
     assert m["spend"]["n_calls"] == 14 and m["spend"]["cost_usd"] == pytest.approx(14 * T.COST_PER_CALL)
     assert m["spend"]["by_role"]["judge"]["n_calls"] == 8 and m["spend"]["budget_usd"] == 1.0
-    assert set(m["files"]) == {"bases.jsonl", "candidates.jsonl", "judgements.jsonl", "paraphrases.csv"}
+    assert set(m["files"]) == {"bases.jsonl", "calls.jsonl", "judgements.jsonl", "paraphrases.csv"}
+    # review additions: delivery vs per_generator_call (the template base's canned reply has 3 of 4), the
+    # per-language entity rule, no partial inputs
+    assert c["generation_delivery"] == {"as_asked": 4, "fewer": 2} and c["bases_partial"] == []
+    assert c["bases_with_candidates_by_names_rule"] == {"names_required": 3, "names_skipped": 0}
+    assert c["entity_rejections_by_base_lang"] == {}
+    # results/paraphrases.json: the same numbers, no word list and no text (CLAUDE.md: report numbers from results/)
+    r_json = json.loads(rt.paths.results_json.read_text(encoding="utf-8"))
+    assert r_json["counts"] == c and r_json["rates"] == r and r_json["spend"] == m["spend"]
+    assert r_json["banned_words"] == {"n_starter": len(bw["starter"]), "n_chi2_extra": 3, "n_final": bw["n_final"],
+                                      "chi2_source": "data/raw/deepset/train.parquet"}
+    assert r_json["models"]["generators"] == [T.GEN] and r_json["models"]["judges"] == [T.JUDGE]
+    blob = rt.paths.results_json.read_text(encoding="utf-8")
+    assert "\"text\"" not in blob and T.INJ_DEEP[:20] not in blob and bw["chi2_extra"][0] not in blob
 
 
 def test_refusal_rates_by_template_over_all_bases(make_rt, T):

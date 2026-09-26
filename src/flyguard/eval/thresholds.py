@@ -34,17 +34,29 @@ def fpr_target_for_pool(n_pool: int, cfg: Configs | None = None) -> float | None
 
 
 def tau_fpr_record(neg_pool_scores: Sequence[float] | np.ndarray, fpr: float | None = None,
-                   source: str = "P_val", cfg: Configs | None = None) -> dict[str, Any] | None:
-    """Frozen τ_FPR (ТЗ 2.5): set on the validation negative pool P_val at the FPR target chosen by E0; ``fpr=None``
-    applies :func:`fpr_target_for_pool` to the pool size and returns ``None`` when the pool is too small (AUC only).
-    The record keeps the target as ``"fpr<=0.01"`` and the FPR actually achieved on the pool."""
+                   source: str = "P_val", cfg: Configs | None = None, *,
+                   n_test_pool: int | None = None) -> dict[str, Any] | None:
+    """Frozen τ_FPR (ТЗ 2.5): set on the validation negative pool P_val at the FPR target chosen by E0.
+
+    The 1 % / 5 % / AUC-only choice is the rule of ТЗ Этап 0 on the size of the *test* pool |P_test| ("TPR при FPR 1%
+    определён при |P_test| ≥ 2 000; 500–1 999 → 5%"), never on the pool the threshold is set on: pass ``fpr``
+    (the ``fpr_target`` of ``results/power.json``) or ``n_test_pool`` (|P_test|, from which the same rule
+    :func:`fpr_target_for_pool` is applied here, as ``power.carrier_rule`` does); giving neither is an error.
+    Returns ``None`` when the rule withdraws the metric (AUC only). The record keeps the target as ``"fpr<=0.01"``,
+    the FPR actually achieved on the pool, ``n`` = |P_val| and, when known, ``n_test_pool`` as the provenance of the
+    target."""
     neg = np.asarray(neg_pool_scores, dtype=float)
     if fpr is None:
-        fpr = fpr_target_for_pool(int(neg.size), cfg)
+        if n_test_pool is None:
+            raise ValueError("tau_fpr_record needs the FPR target: pass fpr (results/power.json fpr_target) or "
+                             "n_test_pool (|P_test|, the pool the ТЗ Этап 0 rule is defined on)")
+        fpr = fpr_target_for_pool(int(n_test_pool), cfg)
         if fpr is None:
             return None
-    tau = threshold_for_fpr(neg, fpr)
-    return threshold_record(tau, source, f"fpr<={fpr:g}", int(neg.size), achieved_fpr=fpr_at_threshold(neg, tau))
+    tau = threshold_for_fpr(neg, float(fpr))
+    return threshold_record(tau, source, f"fpr<={float(fpr):g}", int(neg.size),
+                            achieved_fpr=fpr_at_threshold(neg, tau),
+                            n_test_pool=None if n_test_pool is None else int(n_test_pool))
 
 
 def tau_tpr_record(pos_scores: Sequence[float] | np.ndarray, source: str, tpr: float | None = None,
@@ -67,14 +79,18 @@ def default_threshold_record(value: float, detector: str) -> dict[str, Any]:
 def contract_threshold(benign_val_episode_scores: Sequence[float] | np.ndarray, cfg: Configs | None = None,
                        source: str = "validation_benign") -> dict[str, Any]:
     """Contract §7 threshold: on validation ``benign`` episodes (their max scores), at most one false alarm per 100
-    episodes; fewer than 200 validation episodes -> one per 20, flagged (``note``). ``n`` is ``threshold_n_benign``
-    of the contract CSV. Rates come from ``thresholds.fpr_targets`` (0.01 / 0.05) and the 200 cut is the contract's."""
+    episodes; fewer than ``stats.contract.threshold_min_val_episodes`` (200) validation episodes -> one per 20,
+    flagged (``note``). ``n`` is ``threshold_n_benign`` of the contract CSV. Rates come from
+    ``thresholds.fpr_targets`` (0.01 / 0.05); the cut-off is the contract's, frozen in ``configs/default.yaml``."""
     cfg = cfg or load_configs()
     rates = cfg.default["thresholds"]["fpr_targets"]
+    min_n = int(cfg.default["stats"]["contract"]["threshold_min_val_episodes"])
     scores = np.asarray(benign_val_episode_scores, dtype=float)
     n = int(scores.size)
-    fpr = float(rates["primary"]) if n >= 200 else float(rates["fallback"])
+    enough = n >= min_n
+    fpr = float(rates["primary"]) if enough else float(rates["fallback"])
     tau = threshold_for_fpr(scores, fpr)
-    note = None if n >= 200 else "fewer than 200 validation benign episodes: one false alarm per 20 (contract §7)"
+    note = None if enough else (f"fewer than {min_n} validation benign episodes: one false alarm per "
+                                f"{round(1 / fpr)} (contract §7)")
     return threshold_record(tau, source, f"fa_per_100<={100 * fpr:g}", n, achieved_fpr=fpr_at_threshold(scores, tau),
-                            note=note)
+                            note=note, min_val_episodes=min_n)

@@ -74,7 +74,9 @@ class RegexScorer:
         self.lines = list(patterns) if patterns is not None else read_pattern_lines(path or patterns_path(cfg))
         self.patterns = compile_patterns(self.lines)
 
-    def fit(self, X_train: Any = None, y_train: Any = None, X_val: Any = None, y_val: Any = None) -> "RegexScorer":
+    def fit(self, X_train: Any = None, y_train: Any = None, X_val: Any = None, y_val: Any = None,
+            groups: Any = None) -> "RegexScorer":
+        """No-op: the patterns are frozen in the config file (``groups`` accepted, unused)."""
         return self
 
     def matches(self, text: str) -> list[int]:

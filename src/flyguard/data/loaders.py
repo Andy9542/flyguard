@@ -348,25 +348,46 @@ def load_bipia(cfg: Any, seed_subsample: int, root: Path = ROOT, access_log: Acc
 
 # --------------------------------------------------------------------------------- dojo / dyn traces
 
-def load_trace_documents(cfg: Any, benchmark: str, root: Path = ROOT) -> tuple[pd.DataFrame | None, pd.DataFrame | None, str]:
+def trace_logdir(cfg: Any, benchmark: str, root: Path = ROOT) -> Path:
+    """``<traces>/<benchmark>``: the operator's ``shared.traces_dir`` when traces were handed over (ТЗ 1.5, contract
+    §1), else ``traces.logdir`` under ``root`` — the same rule as ``agentdojo_io.extract.traces_root`` (which is
+    fixed to the repository root); ``root`` exists so tests can build under a temporary tree."""
+    shared = (cfg.operator.get("shared") or {}).get("traces_dir")
+    base = Path(shared) if shared else Path(cfg.default["traces"]["logdir"])
+    if not base.is_absolute():
+        base = root / base
+    return base / benchmark
+
+
+def load_trace_documents(cfg: Any, benchmark: str, root: Path = ROOT, smoke: bool = False,
+                         access_log: AccessLog | None = None, manifest_dir: Path | None = None,
+                         ) -> tuple[pd.DataFrame | None, pd.DataFrame | None, str]:
     """dojo/dyn documents through ``flyguard.agentdojo_io.extract.build_episode_documents`` (design §3), imported
-    lazily; returns ``(episodes, documents, note)`` with ``None`` frames and the reason when the module or the trace
-    logs are missing (design §2: the sources are skipped and the audit records it)."""
+    lazily; returns ``(episodes, documents, note)`` with ``None`` frames and the reason only when the module or the
+    trace logs are missing (design §2: the source is skipped and the audit records it). Any other failure of the
+    extraction (a missing meta file, an unreadable log) propagates: a silent "source skipped" would hide a broken
+    dataset. The extraction manifest goes to ``manifest_dir`` (``data/manifests`` or ``data/manifests/smoke`` for a
+    smoke build, so a smoke run never rewrites the real ``traces_extraction.json``); with a custom ``access_log``
+    (tests) the extraction's own journal lines go under ``root/logs`` instead of the repository journal."""
     src = {"agentdojo": "dojo", "agentdyn": "dyn"}[benchmark]
-    logdir = root / cfg.default["traces"]["logdir"] / benchmark
+    logdir = trace_logdir(cfg, benchmark, root)
+    shown = logdir.relative_to(root) if logdir.is_relative_to(root) else logdir
     if not logdir.exists() or not any(logdir.rglob("*.json")):
-        return None, None, f"{src}: no trace logs under {logdir.relative_to(root) if logdir.is_relative_to(root) else logdir}"
+        return None, None, f"{src}: no trace logs under {shown}"
     try:
         from flyguard.agentdojo_io.extract import build_episode_documents
     except ImportError as exc:
         return None, None, f"{src}: flyguard.agentdojo_io.extract unavailable ({exc})"
-    try:
-        episodes, docs = build_episode_documents(cfg, benchmark)
-    except FileNotFoundError as exc:
-        return None, None, f"{src}: extraction failed ({exc})"
+    manifest_dir = manifest_dir or (root / "data" / "manifests" / ("smoke" if smoke else ""))
+    kwargs: dict[str, Any] = {"traces_dir": logdir, "manifest_path": Path(manifest_dir) / "traces_extraction.json"}
+    if access_log is not None:
+        kwargs["data_access_log"] = root / "logs" / "data_access.log"
+        access_log(logdir, "test", f"flyguard.data.loaders.load_trace_documents: {benchmark} trace logs -> step documents")
+    episodes, docs = build_episode_documents(cfg, benchmark, **kwargs)
     if docs is None or len(docs) == 0:
-        return episodes, None, f"{src}: extraction produced no documents"
-    return episodes, adapt_trace_documents(docs, src, cfg), f"{src}: {len(docs)} documents from {0 if episodes is None else len(episodes)} episodes"
+        return episodes, None, f"{src}: extraction produced no documents under {shown}"
+    return (episodes, adapt_trace_documents(docs, src, cfg),
+            f"{src}: {len(docs)} documents from {0 if episodes is None else len(episodes)} episodes ({shown})")
 
 
 def adapt_trace_documents(docs: pd.DataFrame, source: str, cfg: Any) -> pd.DataFrame:

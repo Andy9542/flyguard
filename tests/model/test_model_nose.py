@@ -1,6 +1,7 @@
 """ТЗ 2.1 / 2.6: hashing nose, N16k, N51-svd, N51-hash — shapes, normalisation, determinism, seed sensitivity."""
 from __future__ import annotations
 
+import os
 import time
 
 import numpy as np
@@ -8,7 +9,7 @@ import pytest
 import scipy.sparse as sp
 
 from flyguard.nose import (N16k, N51Hash, N51Svd, cached_char_ngram_hash_counts, center,
-                           char_ngram_hash_counts)
+                           char_ngram_hash_counts, corpus_hash)
 
 BINS = 1024
 
@@ -40,13 +41,28 @@ def test_counts_deterministic_and_seed_sensitive(texts):
     assert (a != c).nnz > 0 and a.sum() == c.sum()
 
 
-def test_counts_throughput_is_far_above_target():
-    rng = np.random.default_rng(0)
+def windows_per_minute(n_windows: int = 500, seed: int = 0) -> float:
+    """Measured hashing throughput on synthetic 256-char windows (task target: >= 20 000 windows/min). Wall-clock,
+    so it is reported, not asserted, unless the perf check is opted into."""
+    rng = np.random.default_rng(seed)
     alphabet = list("abcdefghijklmnopqrstuvwxyz   .,")
-    windows = ["".join(rng.choice(alphabet, 256)) for _ in range(500)]
+    windows = ["".join(rng.choice(alphabet, 256)) for _ in range(n_windows)]
     t0 = time.perf_counter()
-    char_ngram_hash_counts(windows, seed=1)
-    per_min = 60 * len(windows) / (time.perf_counter() - t0)
+    X = char_ngram_hash_counts(windows, seed=1)
+    elapsed = time.perf_counter() - t0
+    assert X.shape[0] == n_windows
+    return 60.0 * n_windows / max(elapsed, 1e-9)
+
+
+def test_throughput_helper_measures_a_rate():
+    per_min = windows_per_minute(50)
+    assert np.isfinite(per_min) and per_min > 0
+
+
+@pytest.mark.skipif(not os.environ.get("FLYGUARD_PERF_TESTS"),
+                    reason="wall-clock throughput target is opt-in: set FLYGUARD_PERF_TESTS=1")
+def test_counts_throughput_meets_target():
+    per_min = windows_per_minute(500)
     assert per_min >= 20_000, f"{per_min:.0f} windows/min"
 
 
@@ -55,7 +71,40 @@ def test_cached_counts_roundtrip(tmp_path, texts):
     a = cached_char_ngram_hash_counts(texts, path, bins=BINS, seed=2)
     assert path.exists()
     b = cached_char_ngram_hash_counts(texts, path, bins=BINS, seed=2)
-    assert (a != b).nnz == 0 and b.dtype == np.float32
+    assert (a != b).nnz == 0 and b.dtype == np.float32 and b.has_sorted_indices
+    with np.load(path, allow_pickle=False) as npz:
+        assert {"seed", "sizes", "bins", "n_texts", "texts_hash"} <= set(npz.files)
+        assert int(npz["seed"]) == 2 and int(npz["bins"]) == BINS and int(npz["n_texts"]) == len(texts)
+        assert npz["sizes"].tolist() == [3, 4, 5] and int(npz["texts_hash"]) == corpus_hash(texts)
+
+
+def test_cached_counts_recompute_on_identity_mismatch(tmp_path, texts):
+    path = tmp_path / "counts.npz"
+    a = cached_char_ngram_hash_counts(texts, path, bins=BINS, seed=2)
+    mtime = path.stat().st_mtime_ns
+    # same texts, other seed -> different counts, and the file is rewritten
+    c = cached_char_ngram_hash_counts(texts, path, bins=BINS, seed=3)
+    assert (c != a).nnz > 0 and (c != char_ngram_hash_counts(texts, bins=BINS, seed=3)).nnz == 0
+    assert path.stat().st_mtime_ns != mtime
+    # same row count and seed, other texts -> not the stale matrix
+    other = [t[::-1] for t in texts]
+    d = cached_char_ngram_hash_counts(other, path, bins=BINS, seed=3)
+    assert (d != char_ngram_hash_counts(other, bins=BINS, seed=3)).nnz == 0 and (d != c).nnz > 0
+    # other n-gram sizes -> recomputed
+    e = cached_char_ngram_hash_counts(other, path, sizes=(3,), bins=BINS, seed=3)
+    assert (e != char_ngram_hash_counts(other, sizes=(3,), bins=BINS, seed=3)).nnz == 0 and e.sum() < d.sum()
+    # a file in the old save_npz layout (no identity) is a miss, as is a corrupt file
+    sp.save_npz(path, sp.csr_matrix((len(texts), BINS), dtype=np.float32))
+    f = cached_char_ngram_hash_counts(texts, path, bins=BINS, seed=2)
+    assert (f != a).nnz == 0 and f.nnz > 0
+    path.write_bytes(b"not an archive")
+    g = cached_char_ngram_hash_counts(texts, path, bins=BINS, seed=2)
+    assert (g != a).nnz == 0 and (cached_char_ngram_hash_counts(texts, path, bins=BINS, seed=2) != a).nnz == 0
+
+
+def test_corpus_hash_is_order_and_boundary_sensitive():
+    assert corpus_hash(["ab", "c"]) != corpus_hash(["a", "bc"]) and corpus_hash(["a", "b"]) != corpus_hash(["b", "a"])
+    assert corpus_hash(["x", "y"]) == corpus_hash(("x", "y")) and corpus_hash([]) != corpus_hash([""])
 
 
 def test_n16k_log1p_unit_sum_and_mean(texts):

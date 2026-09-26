@@ -28,8 +28,11 @@ Stat = Callable[[pd.DataFrame], float]
 @dataclass
 class CI:
     """A point estimate with a percentile bootstrap interval; ``to_dict`` gives the design §8 shape
-    ``{point, low, high, level, n_boot, n}`` (plus ``n_clusters``). ``samples`` keeps the bootstrap draws so that
-    p-values (``tost.bootstrap_p``) and Holm steps can be derived without redoing the resampling."""
+    ``{point, low, high, level, n_boot, n_valid, n}`` (plus ``n_clusters``). ``n_boot`` is the number of draws
+    made, ``n_valid`` the number whose statistic was defined (a cluster resample can lose a class, see
+    :func:`percentile_ci`): an interval built from far fewer valid draws than requested must be visible in the
+    results files, so the report can flag it. ``samples`` keeps the bootstrap draws so that p-values
+    (``tost.bootstrap_p``) and Holm steps can be derived without redoing the resampling."""
 
     point: float
     low: float
@@ -38,24 +41,34 @@ class CI:
     n_boot: int = 0
     n: int = 0
     n_clusters: int | None = None
+    n_valid: int | None = None
     samples: np.ndarray | None = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"point": _f(self.point), "low": _f(self.low), "high": _f(self.high),
-                             "level": float(self.level), "n_boot": int(self.n_boot), "n": int(self.n)}
+                             "level": float(self.level), "n_boot": int(self.n_boot),
+                             "n_valid": int(self.n_boot if self.n_valid is None else self.n_valid), "n": int(self.n)}
         if self.n_clusters is not None:
             d["n_clusters"] = int(self.n_clusters)
         return d
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "CI":
+        n_boot = int(d.get("n_boot", 0))
         return cls(point=float(d["point"]), low=float(d["low"]), high=float(d["high"]),
-                   level=float(d.get("level", 0.95)), n_boot=int(d.get("n_boot", 0)), n=int(d.get("n", 0)),
-                   n_clusters=d.get("n_clusters"))
+                   level=float(d.get("level", 0.95)), n_boot=n_boot, n=int(d.get("n", 0)),
+                   n_clusters=d.get("n_clusters"), n_valid=int(d.get("n_valid", n_boot)))
 
     @property
     def width(self) -> float:
         return float(self.high - self.low)
+
+    @property
+    def valid_share(self) -> float:
+        """Share of draws with a defined statistic (1.0 when every draw was valid or nothing was drawn)."""
+        if not self.n_boot:
+            return 1.0
+        return float((self.n_boot if self.n_valid is None else self.n_valid) / self.n_boot)
 
     def contains(self, x: float) -> bool:
         return bool(self.low <= x <= self.high)
@@ -112,7 +125,8 @@ def resample_indices(weights: np.ndarray) -> np.ndarray:
 
 def percentile_ci(samples: np.ndarray, point: float, alpha: float, n: int, n_clusters: int | None = None) -> CI:
     """Percentile interval (``stats.bootstrap.method: percentile``): quantiles alpha/2 and 1 − alpha/2 of the finite
-    draws. Draws where the statistic is undefined (a resample lost a class) are dropped, not imputed."""
+    draws. Draws where the statistic is undefined (a resample lost a class) are dropped, not imputed; their number
+    shows as ``n_boot − n_valid`` in the result."""
     s = np.asarray(samples, dtype=float)
     finite = s[np.isfinite(s)]
     if finite.size == 0:
@@ -120,7 +134,7 @@ def percentile_ci(samples: np.ndarray, point: float, alpha: float, n: int, n_clu
     else:
         low, high = (float(v) for v in np.percentile(finite, [100 * alpha / 2, 100 * (1 - alpha / 2)]))
     return CI(point=float(point), low=low, high=high, level=1 - alpha, n_boot=int(s.size), n=int(n),
-              n_clusters=n_clusters, samples=s)
+              n_clusters=n_clusters, n_valid=int(finite.size), samples=s)
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -320,8 +334,9 @@ def macro_auc_bootstrap(by_source: Mapping[str, pd.DataFrame], n: int, seed: int
 # Two-stage bootstrap for H3
 # ----------------------------------------------------------------------------------------------------------------
 def two_stage_bootstrap_h3(docs_by_source: Mapping[str, pd.DataFrame], measured: Mapping[Any, np.ndarray],
-                           nulls: Mapping[Any, np.ndarray], n: int, seed: int, alpha: float = 0.10,
-                           label: str = "label", cluster_key: str = "cluster_id") -> dict[str, Any]:
+                           nulls: Mapping[Any, np.ndarray], n: int, seed: int, alpha: float | None = None,
+                           label: str = "label", cluster_key: str = "cluster_id",
+                           cfg: Configs | None = None) -> dict[str, Any]:
     """H3 interval of macroAUC(measured M) − mean macroAUC(null matrices) over clusters × null matrices × π (ТЗ
     Этап 4 "Двухступенчатый бутстреп H3"; acceptance: "перестановка π ... входит в двухступенчатый бутстреп H3").
 
@@ -332,10 +347,14 @@ def two_stage_bootstrap_h3(docs_by_source: Mapping[str, pd.DataFrame], measured:
       every p, so that level 2 resamples *matrices*).
     Every draw resamples (1) clusters within each source -- shared by all tables, (2) the J null matrices with
     replacement, (3) the P permutations with replacement; the statistic is the π-averaged measured macroAUC minus
-    the (π, matrix)-averaged null macroAUC. Default level 90 % because the result feeds TOST.
+    the (π, matrix)-averaged null macroAUC. ``alpha=None`` gives the TOST level of ``stats.tost.ci`` (90 %),
+    because the result feeds the H3 equivalence test.
     Returns ``{"diff": CI, "measured": CI, "null_mean": CI, "n_perms", "n_null", "delta_reference"}`` where
     ``delta_reference`` is the point null mean (the reference value of the ±δ corridor).
     """
+    if alpha is None:
+        cfg = cfg or load_configs()
+        alpha = 1.0 - float(cfg.default["stats"]["tost"]["ci"])
     perms = sorted(measured, key=str)
     if not perms or any(p not in nulls for p in perms):
         raise ValueError("measured and nulls must cover the same permutation ids")

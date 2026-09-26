@@ -15,6 +15,16 @@ import pandas as pd
 
 SOURCE_ORDER = ("deep", "bipia", "dojo", "dyn", "para", "notinject")
 BENIGN_ATTACKS = (None, "", "none", "None")
+E6_ROLE = {
+    "in_e1_lists": False, "in_c_unl": False, "in_pools": False, "dedup_reference_when_val": True,
+    "consumers": "E6 only (ТЗ 1.4: all attack names x positions); E1/pools use the main pair",
+    "reason": ("E6 variants carry the E1 split of their context (val/test by cluster, ТЗ 1.4) but are listed only under "
+               "bipia.e6_docs: ТЗ 1.9 makes C_unl the train+val *texts* and 45 near-copies of every validation context "
+               "would swamp it, while ТЗ 1.7 makes every val window a dedup reference, variants included, so a test "
+               "variant repeating a validation attack string is excluded (dedup.json documents_dropped_by_source_variant)"),
+}
+"""One rule for the BIPIA E6 variants, written to ``splits.json['bipia']['e6_role']`` (review finding: the val
+variants were out of e1.val and C_unl but in the dedup references with the choice recorded nowhere)."""
 
 
 def crc32_rule(key: str, mod: int, rem: int) -> bool:
@@ -119,7 +129,17 @@ def _e3_frame(documents: pd.DataFrame, episodes: pd.DataFrame | None) -> pd.Data
     return dojo[dojo["episode_class"].fillna("") != "error"]
 
 
-def build_e3_folds(documents: pd.DataFrame, episodes: pd.DataFrame | None, cfg: Any) -> dict[str, list[dict]]:
+E3_FOLD_KINDS = ("cross_template", "cross_suite", "double_holdout")
+E3_USABLE_RULE = "positives and negatives on both sides (n_train_pos, n_train_neg, n_test_pos, n_test_neg all > 0)"
+
+
+def _e3_empty(cfg: Any) -> dict[str, Any]:
+    templates = list(cfg.default["traces"]["agentdojo"]["attacks"])
+    return {**{k: [] for k in E3_FOLD_KINDS}, "templates_configured": templates, "templates_present": [],
+            "templates_missing": templates, "usable": {k: 0 for k in E3_FOLD_KINDS}, "usable_rule": E3_USABLE_RULE}
+
+
+def build_e3_folds(documents: pd.DataFrame, episodes: pd.DataFrame | None, cfg: Any) -> dict[str, Any]:
     """ТЗ 1.10 E3 folds over AgentDojo documents (ТЗ: 4 cross-template, 4 cross-suite, 16 double-holdout).
 
     cross_template: test = episodes of the held-out template plus benign episodes of E1-validation tasks (the
@@ -128,8 +148,13 @@ def build_e3_folds(documents: pd.DataFrame, episodes: pd.DataFrame | None, cfg: 
     held-out template on the held-out suite plus that suite's benign episodes; train = other suites x other
     templates plus their benign episodes. Environments are static (contract §10), so the benign side is a stated
     choice, not a leakage-free guarantee. ``error`` episodes are excluded.
+
+    Every configured fold is emitted (the ТЗ shape), each with ``usable`` = positives and negatives on both sides;
+    ``templates_present``/``templates_missing`` name the attack templates that do / do not occur in the episodes
+    (DEVIATIONS D6: only ``important_instructions`` was generated), so E3 can report "не хватило данных" straight
+    from the manifest instead of fitting on a fold with ``n_train_pos = 0``.
     """
-    out: dict[str, list[dict]] = {"cross_template": [], "cross_suite": [], "double_holdout": []}
+    out = _e3_empty(cfg)
     if episodes is None or documents.empty or not (documents["source"] == "dojo").any():
         return out
     dojo = _e3_frame(documents, episodes)
@@ -138,12 +163,16 @@ def build_e3_folds(documents: pd.DataFrame, episodes: pd.DataFrame | None, cfg: 
     templates = list(cfg.default["traces"]["agentdojo"]["attacks"])
     suites = list(cfg.default["traces"]["agentdojo"]["suites"])
     val_task = dojo["user_task"].map(lambda t: is_agentdojo_val_task(str(t), cfg)).astype(bool)
+    present = set(dojo.loc[~dojo["benign"], "attack"].dropna().astype(str))
+    out["templates_present"] = [t for t in templates if t in present]
+    out["templates_missing"] = [t for t in templates if t not in present]
 
     def fold(name: str, train_mask: pd.Series, test_mask: pd.Series) -> dict:
         tr, te = dojo[train_mask], dojo[test_mask]
-        return {"fold": name, "train": sorted(tr["doc_id"]), "test": sorted(te["doc_id"]),
-                "n_train_pos": int((tr["label"] == 1).sum()), "n_train_neg": int((tr["label"] == 0).sum()),
-                "n_test_pos": int((te["label"] == 1).sum()), "n_test_neg": int((te["label"] == 0).sum())}
+        counts = {"n_train_pos": int((tr["label"] == 1).sum()), "n_train_neg": int((tr["label"] == 0).sum()),
+                  "n_test_pos": int((te["label"] == 1).sum()), "n_test_neg": int((te["label"] == 0).sum())}
+        return {"fold": name, "train": sorted(tr["doc_id"]), "test": sorted(te["doc_id"]), **counts,
+                "usable": all(v > 0 for v in counts.values())}
 
     for t in templates:
         is_t = dojo["attack"] == t
@@ -158,6 +187,7 @@ def build_e3_folds(documents: pd.DataFrame, episodes: pd.DataFrame | None, cfg: 
             is_t = dojo["attack"] == t
             out["double_holdout"].append(fold(f"{s}x{t}", ~is_s & ((~dojo["benign"] & ~is_t) | dojo["benign"]),
                                               is_s & (is_t | dojo["benign"])))
+    out["usable"] = {k: int(sum(1 for f in out[k] if f["usable"])) for k in E3_FOLD_KINDS}
     return out
 
 
@@ -191,9 +221,14 @@ def build_splits(documents: pd.DataFrame, cfg: Any, dropped: set[str] | None = N
         "bipia": {"val_contexts": sorted(set(bip[bip["split"] == "val"]["cluster_id"])),
                   "test_contexts": sorted(set(bip[bip["split"] == "test"]["cluster_id"])),
                   "e6_docs": {"val": sorted(e6[e6["split"] == "val"]["doc_id"]),
-                              "test": sorted(e6[e6["split"] == "test"]["doc_id"])}},
+                              "test": sorted(e6[e6["split"] == "test"]["doc_id"])},
+                  "e6_role": E6_ROLE},
         "rules": cfg.default["splits"],
         "template_names": {t: t for t in templates},
+        "template_names_note": ("identity map: the configured names are the agentdojo attack-registry names the harness "
+                                "--help lists (checked offline against agentdojo.attacks.attack_registry: "
+                                "important_instructions, tool_knowledge, injecagent, ignore_previous all registered); "
+                                "ТЗ 1.10 asks for the correspondence in ASSUMPTIONS.md"),
         "dropped_by_dedup": sorted(dropped),
         "counts": {"train": len(e1_train), "val": len(e1_val), "test": {k: len(v) for k, v in e1_test.items()},
                    "c_unl": len(c_unl), "val_by_source": {s: int((main[(main["split"] == "val") & (main["source"] == s)]).shape[0])

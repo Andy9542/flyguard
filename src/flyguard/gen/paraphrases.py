@@ -2,25 +2,33 @@
 
 Pipeline (idempotent per base, append-only JSONL for everything an API call produced):
 
-    python -m flyguard.gen.paraphrases {bases,generate,filter,judge,finalize,manifest,all} [--smoke] [--limit N]
+    python -m flyguard.gen.paraphrases {bases,generate,filter,judge,finalize,manifest,all} [--limit N] [--allow-partial]
 
-* ``bases``    -> ``bases.jsonl``: 4 AgentDojo templates x 35 injection goals (strings read from the frozen trace
-                 logs' ``injections`` field, dedup by text, ASSUMPTIONS A5; composed from the meta files with the
-                 harness's fill strings when no log exists), deepset test injections, deepset test benign documents.
-* ``generate`` -> ``calls.jsonl`` (one record per API call: ok / refusal / api_error) and ``candidates.jsonl``
-                 (one record per parsed candidate). A base is done when every generator has ``calls_per_base``
-                 ok-or-refusal records; api_error records do not count, so an outage is retried on rerun.
+* ``bases``    -> ``bases.jsonl`` + ``bases_check.json``: 4 AgentDojo templates x every injection goal of the meta
+                 files (strings read from the frozen trace logs' ``injections`` field, dedup by text, ASSUMPTIONS
+                 A5; composed with the harness's fill strings when no log exists), deepset test injections, deepset
+                 test benign documents. Every expected input (meta per suite, trace dir, both deepset parquets) must
+                 exist, otherwise the stage fails; ``--allow-partial`` records the gaps instead (never silently).
+* ``generate`` -> ``calls.jsonl``: one record per API call (ok / refusal / api_error) carrying its parsed
+                 candidates, so a crash can never leave candidates without their call record or vice versa. A base
+                 is done when every generator has ``calls_per_base`` ok-or-refusal records; api_error records do
+                 not count, so an outage is retried on rerun.
 * ``filter``   -> ``filtered.jsonl`` (pure recomputation, rewritten): language, length, Jaccard, banned words,
                  entities, within-base dedup, stratum assignment (A.6).
 * ``judge``    -> ``judgements.jsonl`` (one record per candidate x judge).
-* ``finalize`` -> ``paraphrases.csv``; ``manifest`` -> ``paraphrases_manifest.json``.
+* ``finalize`` -> ``paraphrases.csv``; ``manifest`` -> ``paraphrases_manifest.json`` and the text-free
+                 ``results/paraphrases.json`` (counts, rates, spend) that the report reads.
 * ``all``      -> bases, then generate -> filter -> judge per base in an order interleaved across kinds (so a
                  budget stop leaves a balanced prefix), then filter, finalize, manifest.
 
+Exit codes: 3 = stopped by the API budget (rerun after a top-up resumes without repeating calls), 2 = a required
+input or an earlier stage's output is missing.
+
 Data safety (ТЗ "Безопасность данных"): base texts, candidates and judge outputs are never printed; only counts
 are. The only outgoing flow is the paraphrase stream to ``llm_api.providers[0]`` (stream 2 of 2); every request is
-appended to ``logs/network.log`` and metered into ``results/spend/paraphrases.jsonl``. The transport is injectable
-so that tests never touch the network.
+appended to ``logs/network.log`` and metered into ``results/spend/paraphrases.jsonl``, and ``results/spend.json``
+is refreshed after every API stage. Reads of test material (deepset test, the trace logs) go through
+``logs/data_access.log``. The transport is injectable so that tests never touch the network.
 """
 from __future__ import annotations
 
@@ -45,8 +53,9 @@ from typing import Any, Callable, Protocol
 import numpy as np
 
 from flyguard.config import ROOT, Configs, load_configs, seeds_for
+from flyguard.gen import spend as spend_mod
 from flyguard.gen.harness_run import is_peak, seconds_to_offpeak, usage_cost
-from flyguard.io import append_jsonl, atomic_write_json, atomic_write_text, read_jsonl, sha256_file
+from flyguard.io import append_jsonl, atomic_write_json, atomic_write_text, read_json, read_jsonl, sha256_file
 from flyguard.netlog import DATA_ACCESS_LOG, NETWORK_LOG, log_data_access, log_request
 
 STREAM = "paraphrases"
@@ -131,9 +140,8 @@ class Paths:
     deepset_test: Path
 
     @classmethod
-    def from_cfg(cls, cfg: Configs, root: Path = ROOT, smoke: bool = False) -> "Paths":
-        out = root / "data" / "paraphrases" / ("smoke" if smoke else "")
-        return cls(root=root, out_dir=out, spend_dir=root / cfg.default["traces"]["spend_dir"],
+    def from_cfg(cls, cfg: Configs, root: Path = ROOT) -> "Paths":
+        return cls(root=root, out_dir=root / "data" / "paraphrases", spend_dir=root / cfg.default["traces"]["spend_dir"],
                    netlog=NETWORK_LOG, data_access_log=DATA_ACCESS_LOG,
                    traces_dir=root / cfg.default["traces"]["logdir"] / "agentdojo",
                    meta_dir=root / "data" / "processed" / "meta",
@@ -143,9 +151,9 @@ class Paths:
     @property
     def bases(self) -> Path: return self.out_dir / "bases.jsonl"
     @property
-    def calls(self) -> Path: return self.out_dir / "calls.jsonl"
+    def bases_check(self) -> Path: return self.out_dir / "bases_check.json"
     @property
-    def candidates(self) -> Path: return self.out_dir / "candidates.jsonl"
+    def calls(self) -> Path: return self.out_dir / "calls.jsonl"
     @property
     def filtered(self) -> Path: return self.out_dir / "filtered.jsonl"
     @property
@@ -158,6 +166,8 @@ class Paths:
     def banned(self) -> Path: return self.out_dir / "banned_words_final.json"
     @property
     def spend(self) -> Path: return self.spend_dir / f"{STREAM}.jsonl"
+    @property
+    def results_json(self) -> Path: return self.root / "results" / "paraphrases.json"
 
 
 @dataclasses.dataclass
@@ -179,12 +189,19 @@ class TransportError(RuntimeError):
 
 
 class BudgetExceeded(RuntimeError):
-    """Raised before a call when the spend total has reached the budget; ``partial`` carries the stats of the
-    calls the interrupted stage had already completed (their records are on disk regardless)."""
+    """Raised before a call when the spend total plus one call's headroom would exceed the budget; ``partial``
+    carries the stats of the calls the interrupted stage had already completed (their records are on disk
+    regardless)."""
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.partial: dict[str, int] = {}
+
+
+class MissingInput(FileNotFoundError):
+    """A required input (meta file, trace dir, deepset parquet) or an earlier stage's output (bases.jsonl,
+    paraphrases.csv) is absent. Never degraded silently: the CLI exits with code 2 (review: silent fallbacks
+    would freeze a partial base set)."""
 
 
 class Transport(Protocol):
@@ -205,6 +222,8 @@ class Runtime:
     sleep: Callable[[float], None] = time.sleep
     now: Callable[[], dt.datetime] = utc_now
     global_seed: int = 0
+    allow_partial: bool = False                                  # --allow-partial: record missing inputs, go on
+    spend_json_writer: Callable[[Configs], Any] | None = None    # None -> flyguard.gen.spend.write_spend_json
 
     @property
     def pcfg(self) -> dict[str, Any]:
@@ -234,14 +253,16 @@ class OpenAITransport:
     (never from a file read here, never printed)."""
 
     def __init__(self, base_url: str, api_key: str, netlog_path: Path, sleep: Callable[[float], None] = time.sleep,
-                 max_attempts: int = 8, timeout: float = 600.0) -> None:
+                 max_attempts: int = 8, timeout: float = 600.0, backoff_max: float = 90.0) -> None:
         import openai
         self._openai = openai
         self.base_url = base_url.rstrip("/")
         self.client = openai.OpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=0)
         self.netlog_path = netlog_path
         self.sleep = sleep
-        self.max_attempts = max_attempts
+        self.max_attempts = int(max_attempts)
+        self.timeout = float(timeout)
+        self.backoff_max = float(backoff_max)
 
     def __call__(self, messages: list[dict[str, str]], model: str, temperature: float, **options: Any) -> Reply:
         openai = self._openai
@@ -267,13 +288,14 @@ class OpenAITransport:
                 usage = resp.usage.model_dump() if getattr(resp, "usage", None) is not None else {}
                 return Reply(text=text, usage=usage, finish_reason=getattr(choice, "finish_reason", None))
             if attempt < self.max_attempts - 1:
-                self.sleep(min(90.0, 2.0 * (2 ** attempt)) * (0.5 + random.random()))
+                self.sleep(min(self.backoff_max, 2.0 * (2 ** attempt)) * (0.5 + random.random()))
         raise TransportError(f"retries exhausted: {last}", retryable=True)
 
 
 def make_transport(rt: Runtime) -> OpenAITransport:
     """The real transport for the CLI (ТЗ "Сеть"): providers[0] of the operator config, key from its ``key_env``
-    environment variable, and an early failure when a configured model has no price (cost metering, A2)."""
+    environment variable, the retry policy of ``paraphrase.transport`` (frozen config, A18 commit) and an early
+    failure when a configured model has no price (cost metering, A2)."""
     prov = rt.llm["providers"][0]
     key = os.environ.get(prov["key_env"])
     if not key:
@@ -282,7 +304,9 @@ def make_transport(rt: Runtime) -> OpenAITransport:
     for m in [g["model"] for g in rt.generators] + [j["model"] for j in rt.judges]:
         if m not in prices:
             sys.exit(f"no price for model {m} in llm_api.prices_usd_per_million")
-    return OpenAITransport(prov["base_url"], key, rt.paths.netlog, sleep=rt.sleep)
+    t = rt.pcfg["transport"]
+    return OpenAITransport(prov["base_url"], key, rt.paths.netlog, sleep=rt.sleep, max_attempts=int(t["max_attempts"]),
+                           timeout=float(t["timeout_s"]), backoff_max=float(t["backoff_max_s"]))
 
 
 # ================================================================================================= metering
@@ -295,6 +319,30 @@ def spend_total(spend_dir: Path) -> float:
             if isinstance(rec, dict) and isinstance(rec.get("cost_usd"), (int, float)):
                 total += float(rec["cost_usd"])
     return total
+
+
+def max_call_cost(spend_file: Path, model: str) -> float:
+    """Largest ``cost_usd`` this stream has recorded for ``model`` (0 before its first call): the headroom the
+    budget check keeps so that the total never ends above ``budget_usd`` (acceptance: results/spend.json <= budget).
+    Read from disk, so a rerun after a budget stop knows the call size before its first call."""
+    best = 0.0
+    if Path(spend_file).exists():
+        for rec in read_jsonl(spend_file):
+            if isinstance(rec, dict) and rec.get("model") == model and isinstance(rec.get("cost_usd"), (int, float)):
+                best = max(best, float(rec["cost_usd"]))
+    return best
+
+
+def refresh_spend_json(rt: Runtime) -> Any:
+    """Refresh ``results/spend.json`` (ТЗ "Бюджет API": the artefact of the acceptance check) after any API stage,
+    including a budget stop. ``flyguard.gen.spend.write_spend_json`` is bound to the repository's own spend dir,
+    so it is only called when this runtime meters there; tests inject ``spend_json_writer`` instead and never
+    touch the real file."""
+    if rt.spend_json_writer is not None:
+        return rt.spend_json_writer(rt.cfg)
+    if rt.paths.spend_dir.resolve() == spend_mod.spend_dir(rt.cfg).resolve():
+        return spend_mod.write_spend_json(rt.cfg)
+    return None
 
 
 @dataclasses.dataclass
@@ -316,12 +364,14 @@ def metered_call(rt: Runtime, *, role: str, base_id: str, model: str, temperatur
 
     The record has the same fields as the trace runner's (ts, stream, model, peak, prompt_tokens, cache_hit,
     cache_miss, completion_tokens, cost_usd, latency_s) plus ``base_id`` and ``role``; the cost uses the operator's
-    prices and the same peak-hour rule (``harness_run.is_peak``). The stop rule is the total over
-    ``results/spend/*.jsonl`` reaching ``budget_usd``."""
+    prices and the same peak-hour rule (``harness_run.is_peak``). The stop rule: the total over
+    ``results/spend/*.jsonl`` plus the largest call this stream has recorded for the model (the headroom of one
+    call) would exceed ``budget_usd``; the first call of a model is always allowed."""
     budget = float(rt.llm["budget_usd"])
     total = spend_total(rt.paths.spend_dir)
-    if total >= budget:
-        raise BudgetExceeded(f"spend {total:.4f} USD >= budget {budget:.2f} USD")
+    headroom = max_call_cost(rt.paths.spend, model)
+    if total + headroom > budget:
+        raise BudgetExceeded(f"spend {total:.4f} USD + headroom {headroom:.4f} USD > budget {budget:.2f} USD")
     if rt.llm.get("avoid_peak_hours"):
         now = rt.now()
         if is_peak(now):
@@ -458,16 +508,26 @@ def compose_template(attack: str, goal: str, ground_truth: list[dict[str, Any]] 
     return fill_prompt(tmpl, **values)
 
 
-def template_strings_from_logs(traces_dir: Path, attacks: list[str]) -> dict[tuple[str, str, str], list[str]]:
+def template_strings_from_logs(traces_dir: Path, attacks: list[str],
+                               data_access_log: Path | None = None) -> dict[tuple[str, str, str], list[str]]:
     """Distinct injection strings per (attack, suite, injection_task) from the frozen logs
-    ``<model>/<suite>/<user_task>/<attack>/<injection_task>.json`` (design §7: dedup identical strings)."""
+    ``<model>/<suite>/<user_task>/<attack>/<injection_task>.json`` (design §7: dedup identical strings).
+
+    The logs are test material (ТЗ 1.10), so the read is journaled once per ``<model>/<suite>`` directory with
+    the number of logs opened, like ``agentdojo_io.extract`` does; only the ``injections`` and
+    ``injection_task_id`` fields are used and nothing is printed."""
     out: dict[tuple[str, str, str], list[str]] = {}
     if not traces_dir.exists():
         return out
-    for path in sorted(traces_dir.glob("*/*/*/*/*.json")):
-        model, suite, user_task, attack = path.parts[-5:-1]
-        if attack not in attacks or user_task.startswith("injection_task_"):
-            continue
+    paths = [p for p in sorted(traces_dir.glob("*/*/*/*/*.json"))
+             if p.parts[-2] in attacks and not p.parts[-3].startswith("injection_task_")]
+    if data_access_log is not None:
+        for suite_dir in sorted({p.parent.parent.parent for p in paths}):
+            n = sum(1 for p in paths if p.parent.parent.parent == suite_dir)
+            log_data_access(suite_dir, split="test", purpose=f"paraphrase bases: injections field of {n} trace logs "
+                            "(test tasks included; tool outputs never read or printed)", path=data_access_log)
+    for path in paths:
+        suite, attack = path.parts[-4], path.parts[-2]
         try:
             d = json.loads(path.read_text(encoding="utf-8"))
         except (ValueError, OSError):
@@ -480,18 +540,41 @@ def template_strings_from_logs(traces_dir: Path, attacks: list[str]) -> dict[tup
     return out
 
 
+def check_inputs(rt: Runtime) -> list[str]:
+    """The inputs the ``bases`` stage expects (review: a missing file must never shrink the frozen base set):
+    one meta file with injection tasks per configured suite, the AgentDojo trace directory (A5: the strings come
+    from the frozen logs), deepset test (bases) and deepset train (χ² extension of the banned list)."""
+    problems = []
+    for suite in rt.cfg.default["traces"]["agentdojo"]["suites"]:
+        meta_path = rt.paths.meta_dir / f"agentdojo_{suite}.json"
+        if not meta_path.exists():
+            problems.append(f"missing meta file {meta_path}")
+            continue
+        if not json.loads(meta_path.read_text(encoding="utf-8")).get("injection_tasks"):
+            problems.append(f"no injection_tasks in {meta_path}")
+    if not rt.paths.traces_dir.exists():
+        problems.append(f"missing trace directory {rt.paths.traces_dir}")
+    for name, p in (("deepset test", rt.paths.deepset_test), ("deepset train", rt.paths.deepset_train)):
+        if not p.exists():
+            problems.append(f"missing {name} parquet {p}")
+    return problems
+
+
 def template_bases(rt: Runtime) -> tuple[list[Base], dict[str, int]]:
     """Template bases (ТЗ 1.6, ASSUMPTIONS A5): prefer the logs' strings; compose the rest. Also verifies the
-    composition against every logged string (counts only, never text)."""
+    composition against every logged string (counts only, never text). A missing meta file raises unless
+    ``rt.allow_partial``."""
     attacks = list(rt.pcfg["bases"]["agentdojo_templates"])
     suites = list(rt.cfg.default["traces"]["agentdojo"]["suites"])
-    logged = template_strings_from_logs(rt.paths.traces_dir, attacks)
+    logged = template_strings_from_logs(rt.paths.traces_dir, attacks, rt.paths.data_access_log)
     bases: list[Base] = []
     check = {"composed_equals_log": 0, "composed_differs_from_log": 0, "from_log": 0, "composed": 0}
     for suite in suites:
         meta_path = rt.paths.meta_dir / f"agentdojo_{suite}.json"
         if not meta_path.exists():
-            continue
+            if rt.allow_partial:
+                continue
+            raise MissingInput(f"missing meta file {meta_path} (use --allow-partial to skip the suite)")
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         tasks = sorted(meta.get("injection_tasks", {}).items(), key=lambda kv: _task_number(kv[0]))
         for task_id, task in tasks:
@@ -521,7 +604,9 @@ def deepset_bases(rt: Runtime) -> list[Base]:
     the bases are inputs to generation, not evaluation (design §7)."""
     import pandas as pd
     if not rt.paths.deepset_test.exists():
-        return []
+        if rt.allow_partial:
+            return []
+        raise MissingInput(f"missing deepset test parquet {rt.paths.deepset_test} (use --allow-partial to skip)")
     log_data_access(rt.paths.deepset_test, split="test", purpose="paraphrase bases", path=rt.paths.data_access_log)
     df = pd.read_parquet(rt.paths.deepset_test)
     want_inj = bool(rt.pcfg["bases"].get("deepset_test_injections", True))
@@ -553,36 +638,58 @@ def interleave_kinds(bases: list[Base]) -> list[Base]:
     return out
 
 
-def build_bases(rt: Runtime, smoke: bool = False) -> tuple[list[Base], dict[str, Any]]:
+def freeze_bases(rt: Runtime, bases: list[Base], check: dict[str, int], problems: list[str] | None = None) -> dict[str, Any]:
+    """Write ``bases.jsonl`` and its sidecar ``bases_check.json`` (template verification counts, the input check,
+    counts by kind/origin, creation time). The sidecar is what the manifest reports, so the logs are never
+    re-opened after the bases stage. Refuses an empty base set."""
+    if not bases:
+        raise MissingInput("no bases to freeze: every input is missing or empty")
+    lines = [json.dumps(b.to_dict(), sort_keys=True, ensure_ascii=False) for b in bases]
+    atomic_write_text(rt.paths.bases, "\n".join(lines) + "\n")
+    sidecar = {"created": _ts(rt.now()), "n": len(bases), "by_kind": dict(Counter(b.kind for b in bases)),
+               "by_origin": dict(Counter(b.origin for b in bases)), "template_check": dict(check),
+               "partial": list(problems or []), "allow_partial": bool(rt.allow_partial)}
+    atomic_write_json(rt.paths.bases_check, sidecar)
+    return sidecar
+
+
+def build_bases(rt: Runtime) -> tuple[list[Base], dict[str, Any]]:
     """``bases`` stage. Frozen once written: an existing ``bases.jsonl`` is loaded, not rebuilt (ТЗ "Честность":
-    generated artefacts are not regenerated; candidates refer to base ids)."""
+    generated artefacts are not regenerated; candidates refer to base ids). Before building, every expected input
+    must be present (``check_inputs``); with ``rt.allow_partial`` the problems are recorded in the sidecar and the
+    manifest instead of raising."""
     if rt.paths.bases.exists():
         bases = load_bases(rt)
         return bases, {"existing": True, "n": len(bases), "by_kind": dict(Counter(b.kind for b in bases))}
+    problems = check_inputs(rt)
+    if problems and not rt.allow_partial:
+        raise MissingInput("; ".join(problems) + " (use --allow-partial to build from what exists)")
     tmpl, check = template_bases(rt)
     bases = tmpl + deepset_bases(rt)
-    if smoke:
-        n = int(rt.cfg.default["smoke"]["paraphrase_bases"])
-        bases = [b for k in KINDS for b in [x for x in bases if x.kind == k][:n]]
-    lines = [json.dumps(b.to_dict(), sort_keys=True, ensure_ascii=False) for b in bases]
-    atomic_write_text(rt.paths.bases, "\n".join(lines) + ("\n" if lines else ""))
-    return bases, {"existing": False, "n": len(bases), "by_kind": dict(Counter(b.kind for b in bases)),
-                   "template_check": check}
+    sidecar = freeze_bases(rt, bases, check, problems)
+    return bases, {"existing": False, "n": len(bases), "by_kind": sidecar["by_kind"], "template_check": check,
+                   "partial": problems}
 
 
 def load_bases(rt: Runtime) -> list[Base]:
-    """Read the frozen ``bases.jsonl`` (design §7) back into Base objects, in file order."""
-    return [Base(**{k: v for k, v in rec.items() if k in Base.__dataclass_fields__}) for rec in read_jsonl(rt.paths.bases)]
+    """Read the frozen ``bases.jsonl`` (design §7) back into Base objects, in file order. Missing or empty ->
+    ``MissingInput`` (the offline stages must not produce empty outputs from nothing)."""
+    if not rt.paths.bases.exists():
+        raise MissingInput(f"{rt.paths.bases} is missing: run the bases stage first")
+    bases = [Base(**{k: v for k, v in rec.items() if k in Base.__dataclass_fields__}) for rec in read_jsonl(rt.paths.bases)]
+    if not bases:
+        raise MissingInput(f"{rt.paths.bases} is empty")
+    return bases
 
 
 # ================================================================================================= banned words
 
 def stem(word: str) -> str:
-    """Tiny inflection rule for the banned list (design §7 "prefix match of the stem"): strip one of
-    ing/ed/es/s and then a final e, each only while at least 4 characters remain."""
+    """Tiny inflection rule for the banned list (design §7): strip one of ing/ed/es/s (not the s of an "-ss"
+    word such as "bypass") and then a final e, each only while at least 4 characters remain."""
     w = word.lower()
     for suf in ("ing", "ed", "es", "s"):
-        if w.endswith(suf) and len(w) - len(suf) >= 4:
+        if w.endswith(suf) and len(w) - len(suf) >= 4 and not (suf == "s" and w.endswith("ss")):
             w = w[: -len(suf)]
             break
     if w.endswith("e") and len(w) - 1 >= 4:
@@ -590,15 +697,26 @@ def stem(word: str) -> str:
     return w
 
 
+_INFLECTIONS = "e|es|ed|s|ing|ly"
+
+
 def banned_pattern(entry: str) -> re.Pattern[str]:
-    """Case-insensitive, word-bounded regex for one banned entry: every word of at least 4 stem letters matches
-    any inflection (stem prefix + word characters); short words ("dan", "act", "do") match exactly, so that
-    "dan" does not ban "danger"."""
+    """Case-insensitive, word-bounded regex for one banned entry. Every word with a stem of at least 4 letters
+    matches the word itself or its stem followed by an explicit inflection (-e/-es/-ed/-s/-ing/-ly, with an
+    optional doubled final consonant: "transferred", "forgetting") and, for "-y" words, -ies/-ied/-ying/-ily
+    ("policies"); short words ("dan", "act", "do") match exactly. The earlier "stem + any word characters" rule
+    banned "justice" for "just", "mustard" for "must" and "printer" for "print" (review); a closed suffix class
+    keeps the ТЗ's "in any inflection" without swallowing unrelated words."""
     parts = []
     for w in entry.lower().split():
         st = stem(w)
         if len(st) >= 4 and re.fullmatch(r"[a-z]+", st):
-            parts.append(re.escape(st) + r"\w*")
+            alts = {w, st}
+            if st.endswith("y"):
+                alts |= {st[:-1] + s for s in ("ies", "ied", "ying", "ily")}
+            core = "(?:" + "|".join(re.escape(a) for a in sorted(alts, key=lambda a: (-len(a), a))) + ")"
+            doubled = "" if st[-1] in "aeiouy" else f"(?:{st[-1]})?"
+            parts.append(core + doubled + f"(?:{_INFLECTIONS})?")
         else:
             parts.append(re.escape(w))
     return re.compile(r"(?<!\w)" + r"\s+".join(parts) + r"(?!\w)", re.IGNORECASE)
@@ -634,38 +752,40 @@ def load_starter_banned(path: Path) -> list[str]:
 
 
 _TOKEN_STRIP = "\"'`“”‘’«»()[]{}<>.,;:!?¡¿—–-_*+=/\\|~^#%&$@"
-CHI2_MIN_TOKEN_LEN = 3
 
 
 def _english_stop_words() -> frozenset[str]:
     """sklearn's English stop-word list. On deepset train the literal χ² top-30 is dominated by English function
     words ("the", "you", "of", "as") because the benign half is largely German; banning them would make an
-    English deep paraphrase impossible, so function words are excluded (reported as a deviation)."""
+    English deep paraphrase impossible, so function words are excluded (ASSUMPTIONS A18, configurable through
+    ``paraphrase.chi2.exclude_english_stopwords``)."""
     from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
     return frozenset(ENGLISH_STOP_WORDS)
 
 
-def chi2_extension(texts: list[str], labels: list[int], starter: list[str], n_extra: int) -> list[str]:
-    """A.1: the ``n_extra`` lower-cased whitespace tokens of deepset **train** with the highest χ² between injection
-    and benign documents, skipping tokens already covered by the starter list (incl. its inflection rule), tokens
-    more frequent in benign than in injection documents (banning benign vocabulary would not serve the deep
-    stratum) and English stop words. Tokens are stripped of surrounding punctuation, need a letter and
-    ≥ ``CHI2_MIN_TOKEN_LEN`` characters; ties break alphabetically, so the list is deterministic."""
+def chi2_extension(texts: list[str], labels: list[int], starter: list[str], n_extra: int, *, min_token_len: int = 3,
+                   exclude_english_stopwords: bool = True, injection_enriched_only: bool = True) -> list[str]:
+    """A.1 as frozen in ``paraphrase.chi2`` (ASSUMPTIONS A18): the ``n_extra`` lower-cased whitespace tokens of
+    deepset **train** with the highest χ² between injection and benign documents, skipping tokens already covered
+    by the starter list (incl. its inflection rule), and, when the flags say so, tokens more frequent in benign
+    than in injection documents (banning benign vocabulary would not serve the deep stratum) and English stop
+    words. Tokens are stripped of surrounding punctuation, need a letter and ≥ ``min_token_len`` characters; ties
+    break alphabetically, so the list is deterministic."""
     n1 = sum(1 for y in labels if int(y) == 1)
     n0 = len(labels) - n1
     if n1 == 0 or n0 == 0:
         return []
+    stop = _english_stop_words() if exclude_english_stopwords else frozenset()
     c1: Counter[str] = Counter()
     c0: Counter[str] = Counter()
     for text, y in zip(texts, labels):
         toks = {t.strip(_TOKEN_STRIP) for t in str(text).lower().split()}
-        toks = {t for t in toks if len(t) >= CHI2_MIN_TOKEN_LEN and re.search(r"[^\W\d_]", t)
-                and t not in _english_stop_words()}
+        toks = {t for t in toks if len(t) >= int(min_token_len) and re.search(r"[^\W\d_]", t) and t not in stop}
         (c1 if int(y) == 1 else c0).update(toks)
     scored = []
     for tok in set(c1) | set(c0):
         a, b = c1.get(tok, 0), c0.get(tok, 0)
-        if a / n1 <= b / n0:
+        if injection_enriched_only and a / n1 <= b / n0:
             continue
         c, d = n1 - a, n0 - b
         n = n1 + n0
@@ -693,15 +813,22 @@ def final_banned_list(rt: Runtime) -> dict[str, Any]:
     import pandas as pd
     starter = load_starter_banned(prompt_paths(rt)["banned_words"])
     extra: list[str] = []
-    if rt.paths.deepset_train.exists():
+    chi2_cfg = dict(rt.pcfg["chi2"])
+    if not rt.paths.deepset_train.exists():
+        if not rt.allow_partial:
+            raise MissingInput(f"missing deepset train parquet {rt.paths.deepset_train} for the chi2 extension "
+                               "(use --allow-partial to ban the starter list only)")
+    else:
         log_data_access(rt.paths.deepset_train, split="train", purpose="chi2 extension of banned_words",
                         path=rt.paths.data_access_log)
         df = pd.read_parquet(rt.paths.deepset_train)
         extra = chi2_extension(df["text"].tolist(), [int(v) for v in df["label"].tolist()], starter,
-                               int(rt.pcfg["chi2_extra_words"]))
-    out = {"starter": starter, "chi2_extra": extra, "final": starter + extra,
+                               int(rt.pcfg["chi2_extra_words"]), min_token_len=int(chi2_cfg["min_token_len"]),
+                               exclude_english_stopwords=bool(chi2_cfg["exclude_english_stopwords"]),
+                               injection_enriched_only=bool(chi2_cfg["injection_enriched_only"]))
+    out = {"starter": starter, "chi2_extra": extra, "final": starter + extra, "chi2_rule": chi2_cfg,
            "source": str(rt.paths.deepset_train.relative_to(rt.paths.root)) if rt.paths.deepset_train.exists() else None,
-           "created": _ts(rt.now())}
+           "partial": not rt.paths.deepset_train.exists(), "created": _ts(rt.now())}
     atomic_write_json(rt.paths.banned, out)
     return out
 
@@ -765,11 +892,13 @@ _ENTITY_RES: list[tuple[str, re.Pattern[str]]] = [
 _URL_TRAIL = ".,;:!?"
 
 
-def extract_entities(text: str) -> list[tuple[str, str]]:
+def extract_entities(text: str, include_names: bool = True) -> list[tuple[str, str]]:
     """Concrete details that a paraphrase must keep verbatim (ТЗ 1.6 "плейсхолдерные строки и конкретные сущности"):
     emails, URLs, IBAN-like tokens, ``$placeholder`` tokens of tool_knowledge, file names, amounts and other
     numbers of ≥ 2 digits, double-quoted strings and capitalised multi-word names (a sentence-initial capital is
-    dropped before deciding whether a name remains)."""
+    dropped before deciding whether a name remains). The ``name`` class is an English-orthography heuristic:
+    callers switch it off for bases in other languages, where capitalised common nouns ("Neue Wohnung") are not
+    names and would wrongly be required verbatim in the English paraphrase (review finding)."""
     t = _match_text(text)
     found: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -781,6 +910,8 @@ def extract_entities(text: str) -> list[tuple[str, str]]:
             found.append((kind, value))
 
     for kind, rx in _ENTITY_RES:
+        if kind == "name" and not include_names:
+            continue
         for m in rx.finditer(t):
             value = m.group(1) if kind == "quoted" else m.group(0)
             if kind == "url":
@@ -796,14 +927,15 @@ def extract_entities(text: str) -> list[tuple[str, str]]:
     return found
 
 
-def missing_entities(base_text: str, candidate_text: str, extra_required: list[str] | None = None) -> list[str]:
+def missing_entities(base_text: str, candidate_text: str, extra_required: list[str] | None = None,
+                     include_names: bool = True) -> list[str]:
     """Entities of the base absent from the candidate (ТЗ 1.6 entity filter). Emails and URLs are compared
     case-insensitively, everything else verbatim after whitespace normalization; ``extra_required`` adds the
     harness fill strings for template bases. Returns ``kind:length`` tags only, never the values (data safety)."""
     cand = _match_text(candidate_text)
     cand_low = cand.lower()
     missing = []
-    for kind, value in extract_entities(base_text):
+    for kind, value in extract_entities(base_text, include_names=include_names):
         v = _match_text(value)
         ok = (v.lower() in cand_low) if kind in ("email", "url") else (v in cand)
         if not ok:
@@ -845,44 +977,55 @@ class FilterResult:
     missing: list[str]
     dup_of: str | None = None
     demoted: bool = False              # declared deep, assigned shallow (A.6)
+    base_lang: str = "unk"             # langdetect code of the base (names are required only for English bases)
+    names_required: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
 
 
 def assign_stratum(kind: str, jac: float, banned_hits: list[str], f: dict[str, Any]) -> str | None:
-    """A.6: deep when Jaccard ≤ deep_max and (for injection kinds) no banned word; shallow when ≤ jaccard_max;
-    otherwise none (dropped). A declared-deep candidate failing the word rule is demoted to shallow; failing
-    the Jaccard rule it is dropped. Negatives have no banned-word rule (benign texts may legitimately say
-    "email" or "send"); their stratum follows Jaccard alone."""
+    """A.6 with the frozen ``filters``: deep when Jaccard ≤ ``deep_max`` and (for injection kinds) no banned word;
+    shallow when Jaccard lies in ``shallow_range``; a declared-deep injection candidate that fails only the word
+    rule is demoted to shallow even below the range (A.6: "переводится в мелкую страту"); anything else is
+    dropped (``None``). Negatives have no banned-word rule (benign texts may legitimately say "email" or "send");
+    their stratum follows Jaccard alone."""
     if jac <= float(f["deep_max"]) and (kind == KIND_BEN or not banned_hits):
         return "deep"
-    if jac <= float(f["jaccard_max"]):
+    lo, hi = (float(x) for x in f["shallow_range"])
+    if lo <= jac <= hi or (jac < lo and banned_hits and kind != KIND_BEN):
         return "shallow"
     return None
 
 
 def filter_candidate(base: Base, cand: dict[str, Any], f: dict[str, Any], banned: BannedMatcher,
-                     lang_seed: int = 0) -> FilterResult:
+                     lang_seed: int = 0, base_lang: str | None = None) -> FilterResult:
     """Filters of ТЗ 1.6 in code (language, length 0.5-2x, Jaccard ≤ 0.5 on character 5-gram shingles, banned
-    words for the deep stratum, entity preservation) and the stratum assignment of A.6."""
+    words for the deep stratum, entity preservation) and the stratum assignment of A.6. Capitalised-name
+    entities are required only when the base itself is in the target language (``base_lang``; detected here when
+    the caller did not)."""
     text = cand["text"]
     declared = cand.get("declared_stratum")
     base_norm, cand_norm = normalize_text(base.text), normalize_text(text)
     k = int(f.get("shingle", 5))
+    target_lang = str(f.get("language", "en"))
+    if base_lang is None:
+        base_lang = detect_language(base_norm, lang_seed)
+    names_required = base_lang == target_lang
     jac = jaccard_texts(base_norm, cand_norm, k) if cand_norm else 1.0
     ratio = len(cand_norm) / max(len(base_norm), 1)
     hits = banned.hits(text) if base.kind != KIND_BEN else []
     extra = [v for v in FILL.values()] if base.kind == KIND_TEMPLATE else []
-    missing = missing_entities(base.text, text, extra) if cand_norm else ["empty"]
+    missing = missing_entities(base.text, text, extra, include_names=names_required) if cand_norm else ["empty"]
     lang = detect_language(cand_norm, lang_seed) if cand_norm else "unk"
     res = FilterResult(cand_id=cand["cand_id"], base_id=base.base_id, kind=base.kind, generator=cand["generator"],
                        declared_stratum=declared, passed=False, reason=None, jaccard=round(jac, 4), stratum=None,
-                       lang=lang, len_ratio=round(ratio, 3), banned_hits=hits, missing=missing)
+                       lang=lang, len_ratio=round(ratio, 3), banned_hits=hits, missing=missing,
+                       base_lang=base_lang, names_required=names_required)
     lo, hi = (float(x) for x in f["length_ratio"])
     if not cand_norm:
         res.reason = "empty"
-    elif lang != f.get("language", "en"):
+    elif lang != target_lang:
         res.reason = "language"
     elif not (lo <= ratio <= hi):
         res.reason = "length"
@@ -895,19 +1038,21 @@ def filter_candidate(base: Base, cand: dict[str, Any], f: dict[str, Any], banned
         res.passed = res.stratum is not None
         res.demoted = declared == "deep" and res.stratum == "shallow"
         if not res.passed:
-            res.reason = "jaccard_high"
+            res.reason = "jaccard_high" if jac > float(f["shallow_range"][1]) else "stratum_gap"
     return res
 
 
 def filter_base(base: Base, cands: list[dict[str, Any]], f: dict[str, Any], banned: BannedMatcher,
                 lang_seed: int = 0) -> list[FilterResult]:
     """All filters for one base plus within-base dedup at ``dedup_jaccard`` in deterministic candidate order
-    (generator order, call index, position in the reply): the first of a near-duplicate pair survives."""
+    (generator order, call index, position in the reply): the first of a near-duplicate pair survives. The base
+    language is detected once per base."""
     k = int(f.get("shingle", 5))
+    base_lang = detect_language(normalize_text(base.text), lang_seed)
     kept: list[tuple[str, set[str]]] = []
     out = []
     for cand in cands:
-        res = filter_candidate(base, cand, f, banned, lang_seed)
+        res = filter_candidate(base, cand, f, banned, lang_seed, base_lang)
         if res.passed:
             sh = char_shingles(normalize_text(cand["text"]), k)
             for other_id, other_sh in kept:
@@ -921,12 +1066,28 @@ def filter_base(base: Base, cands: list[dict[str, Any]], f: dict[str, Any], bann
     return out
 
 
+def candidates_of_call(rec: dict[str, Any]) -> list[dict[str, Any]]:
+    """The candidate records carried by one ok call record of ``calls.jsonl`` (``cand_id`` =
+    ``<base_id>|<generator>|<call_index>|<k>``)."""
+    out = []
+    for it in rec.get("candidates") or []:
+        k = int(it["k"])
+        out.append({"cand_id": f"{rec['base_id']}|{rec['generator']}|{int(rec['call_index'])}|{k}",
+                    "base_id": rec["base_id"], "kind": rec["kind"], "generator": rec["generator"],
+                    "call_index": int(rec["call_index"]), "k": k, "declared_stratum": it.get("declared_stratum"),
+                    "text": it["text"], "ts": rec.get("ts")})
+    return out
+
+
 def load_candidates(rt: Runtime) -> dict[str, list[dict[str, Any]]]:
-    """``candidates.jsonl`` grouped by base, in the deterministic order the filters and the dedup rely on:
-    generator (config order), call index, position in the reply."""
+    """Candidates of every ok call in ``calls.jsonl`` grouped by base, in the deterministic order the filters and
+    the dedup rely on: generator (config order), call index, position in the reply. One call = one ledger line,
+    so a crash can never duplicate or orphan candidates (review)."""
     by_base: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for rec in read_jsonl(rt.paths.candidates):
-        by_base[rec["base_id"]].append(rec)
+    for rec in read_jsonl(rt.paths.calls):
+        if rec.get("status") == "ok":
+            for c in candidates_of_call(rec):
+                by_base[rec["base_id"]].append(c)
     order = {g["model"]: i for i, g in enumerate(rt.generators)}
     for recs in by_base.values():
         recs.sort(key=lambda r: (order.get(r["generator"], 99), r["generator"], int(r["call_index"]), int(r["k"])))
@@ -993,10 +1154,14 @@ def _done_calls(recs: list[dict[str, Any]]) -> set[int]:
 def generate_base(rt: Runtime, base: Base, banned_final: list[str],
                   calls: dict[tuple[str, str], list[dict[str, Any]]]) -> dict[str, int]:
     """``generate`` for one base: for every generator, the missing call indices (idempotent), each parsed strictly;
-    candidates appended to ``candidates.jsonl``, the call record to ``calls.jsonl``. Raises BudgetExceeded."""
+    one ``calls.jsonl`` line per call carrying its candidates (``n_expected`` = what A.2/A.3 asked for, so
+    under/over-delivery is visible in the manifest). A reply cut by ``max_tokens`` (finish_reason ``length``) is a
+    refusal of its own kind, not a JSON refusal. Raises BudgetExceeded."""
     stats: Counter = Counter()
     temperature = float(rt.llm["paraphrase"].get("temperature_generate", 0.9))
     messages = generator_messages(rt, base, banned_final)
+    per = rt.pcfg["per_generator_call"]
+    n_expected = int(per["benign_total"]) if base.kind == KIND_BEN else int(per["shallow"]) + int(per["deep"])
     for gen in rt.generators:
         model = gen["model"]
         n_calls = int(gen.get("calls_per_base", 1))
@@ -1014,8 +1179,9 @@ def generate_base(rt: Runtime, base: Base, banned_final: list[str],
                 raise
             rec = {"base_id": base.base_id, "kind": base.kind, "attack": base.attack, "generator": model,
                    "call_index": ci, "ts": _ts(rt.now()), "status": None, "refusal_reason": None,
-                   "n_candidates": 0, "finish_reason": res.finish_reason, "cost_usd": round(res.cost_usd, 8),
-                   "raw_sha256": _sha256_text(res.text) if res.text else None, "error": res.error}
+                   "n_candidates": 0, "n_expected": n_expected, "candidates": [], "finish_reason": res.finish_reason,
+                   "cost_usd": round(res.cost_usd, 8), "raw_sha256": _sha256_text(res.text) if res.text else None,
+                   "error": res.error}
             if res.status == "api_error":
                 rec["status"] = "api_error"
                 stats["api_error"] += 1
@@ -1024,28 +1190,25 @@ def generate_base(rt: Runtime, base: Base, banned_final: list[str],
                 stats["refusal"] += 1
             else:
                 items, why = parse_generator_reply(res.text, base.kind)
-                if res.finish_reason == "content_filter":
-                    items, why = None, "content_filter"
+                if res.finish_reason in ("content_filter", "length"):
+                    items, why = None, res.finish_reason
                 if items is None:
                     rec["status"], rec["refusal_reason"] = "refusal", why
                     stats["refusal"] += 1
                 else:
                     rec["status"], rec["n_candidates"] = "ok", len(items)
+                    rec["candidates"] = [{"k": k, "declared_stratum": it["declared_stratum"], "text": it["text"]}
+                                         for k, it in enumerate(items)]
                     stats["ok"] += 1
-                    for k, it in enumerate(items):
-                        append_jsonl(rt.paths.candidates, {
-                            "cand_id": f"{base.base_id}|{model}|{ci}|{k}", "base_id": base.base_id, "kind": base.kind,
-                            "generator": model, "call_index": ci, "k": k, "declared_stratum": it["declared_stratum"],
-                            "text": it["text"], "ts": rec["ts"]})
-                        stats["candidates"] += 1
-            append_jsonl(rt.paths.calls, rec)
+                    stats["candidates"] += len(items)
+            append_jsonl(rt.paths.calls, rec)      # one line = the call and its candidates, appended atomically
             calls.setdefault((base.base_id, model), []).append(rec)
     return dict(stats)
 
 
 def generate_stage(rt: Runtime, bases: list[Base] | None = None, limit: int | None = None) -> dict[str, Any]:
     """``generate``: every base (interleaved across kinds) through ``generate_base``; stops at the budget
-    (ТЗ "Бюджет API") and reports counts only."""
+    (ТЗ "Бюджет API"), refreshes ``results/spend.json`` and reports counts only."""
     bases = interleave_kinds(bases or load_bases(rt))
     banned = final_banned_list(rt)["final"]
     calls = load_calls(rt)
@@ -1064,14 +1227,17 @@ def generate_stage(rt: Runtime, bases: list[Base] | None = None, limit: int | No
         if any(k != "skipped" for k in st):
             processed += 1
         totals.update(st)
+    refresh_spend_json(rt)
     return {"bases": len(bases), "processed": processed, "stopped": stopped, **dict(totals)}
 
 
 # ================================================================================================= judging
 
-def parse_judge_reply(text: str | None, kind: str) -> tuple[dict[str, Any] | None, str | None]:
+def parse_judge_reply(text: str | None, kind: str, reason_max_chars: int = 300) -> tuple[dict[str, Any] | None, str | None]:
     """Strict schema of A.4/A.5: the two verdict fields must be JSON booleans, ``confidence`` a number in [0, 1],
-    ``reason`` an optional string. Anything else (a string "true", a missing field, prose) is a refusal (A.6)."""
+    ``reason`` an optional string, kept up to ``reason_max_chars`` (``paraphrase.judge_reason_max_chars``: the
+    reason is model output about data and is stored, never printed). Anything else (a string "true", a missing
+    field, prose) is a refusal (A.6)."""
     if text is None or not text.strip():
         return None, "empty_content"
     try:
@@ -1092,7 +1258,7 @@ def parse_judge_reply(text: str | None, kind: str) -> tuple[dict[str, Any] | Non
     reason = obj.get("reason")
     if reason is not None and not isinstance(reason, str):
         return None, "schema"
-    return {"verdict": verdict, "confidence": float(conf), "reason": (reason or "")[:300] or None}, None
+    return {"verdict": verdict, "confidence": float(conf), "reason": (reason or "")[:int(reason_max_chars)] or None}, None
 
 
 def accept_verdict(kind: str, verdict: dict[str, bool]) -> bool:
@@ -1143,7 +1309,9 @@ def judge_candidate(rt: Runtime, base: Base, cand: dict[str, Any],
             rec["status"], rec["refusal_reason"] = "refusal", "provider_error"
             stats["refusal"] += 1
         else:
-            parsed, why = parse_judge_reply(res.text, base.kind)
+            parsed, why = parse_judge_reply(res.text, base.kind, int(rt.pcfg["judge_reason_max_chars"]))
+            if res.finish_reason in ("content_filter", "length"):
+                parsed, why = None, res.finish_reason
             if parsed is None:
                 rec["status"], rec["refusal_reason"] = "refusal", why
                 stats["refusal"] += 1
@@ -1187,6 +1355,7 @@ def judge_stage(rt: Runtime, bases: list[Base] | None = None, limit: int | None 
             stopped = str(err)
             break
         processed += int(touched)
+    refresh_spend_json(rt)
     return {"bases": len(bases), "processed": processed, "stopped": stopped, **dict(totals)}
 
 
@@ -1324,15 +1493,28 @@ def _rate_table(records: list[dict[str, Any]], key: str, num: Callable[[dict[str
 
 def write_manifest(rt: Runtime, bases: list[Base] | None = None) -> dict[str, Any]:
     """``paraphrases_manifest.json`` (ТЗ 1.6 "Объём", design §7): models, dates, prompt hashes, the final banned
-    list, acceptance and refusal rates by stratum / kind / generator / template, counts, spend, seed."""
+    list, acceptance and refusal rates by stratum / kind / generator / template, counts, spend, seed. The
+    template verification comes from the bases stage's sidecar (the logs are never re-opened here); the CSV and
+    ``filtered.jsonl`` (finalize's outputs) must exist, while zero calls is a legitimate state (a budget stop
+    before the first call). A text-free copy of the numbers goes to ``results/paraphrases.json`` for the report."""
     bases = bases or load_bases(rt)
     base_by_id = {b.base_id: b for b in bases}
+    if not rt.paths.bases_check.exists():
+        raise MissingInput(f"{rt.paths.bases_check} is missing: run the bases stage first")
+    sidecar = read_json(rt.paths.bases_check)
+    for p in (rt.paths.filtered, rt.paths.csv):
+        if not p.exists():
+            raise MissingInput(f"{p} is missing: run finalize first")
     calls = [r for r in read_jsonl(rt.paths.calls)]
-    cands = read_jsonl(rt.paths.candidates)
+    cands = [c for r in calls if r.get("status") == "ok" for c in candidates_of_call(r)]
     filtered = read_jsonl(rt.paths.filtered)
     judgements = read_jsonl(rt.paths.judgements)
-    rows = list(csv.DictReader(open(rt.paths.csv, encoding="utf-8", newline=""))) if rt.paths.csv.exists() else []
+    with open(rt.paths.csv, encoding="utf-8", newline="") as fh:
+        rows = list(csv.DictReader(fh))
     spend = [r for r in read_jsonl(rt.paths.spend)] if rt.paths.spend.exists() else []
+    delivery = Counter("as_asked" if int(c["n_candidates"]) == int(c.get("n_expected", -1)) else
+                       ("fewer" if int(c["n_candidates"]) < int(c.get("n_expected", -1)) else "more")
+                       for c in calls if c.get("status") == "ok")
     banned = final_banned_list(rt)
     decisive = [c for c in calls if c.get("status") in ("ok", "refusal")]
     is_ref = lambda c: c.get("status") == "refusal"  # noqa: E731
@@ -1382,13 +1564,20 @@ def write_manifest(rt: Runtime, bases: list[Base] | None = None) -> dict[str, An
             "bases": dict(Counter(b.kind for b in bases)),
             "bases_by_template": dict(Counter(b.attack for b in bases if b.attack)),
             "bases_by_origin": dict(Counter(b.origin for b in bases)),
-            "template_verification": template_bases(rt)[1],   # composed vs logged strings, recomputed (§10 honesty)
+            "template_verification": sidecar["template_check"],   # composed vs logged strings, from the bases stage
+            "bases_partial": list(sidecar.get("partial") or []),
             "generation_calls": dict(Counter(c.get("status") for c in calls)),
             "generation_refusal_reasons": dict(Counter(c.get("refusal_reason") for c in calls if c.get("status") == "refusal")),
+            "generation_delivery": dict(delivery),               # ok calls vs per_generator_call: as_asked/fewer/more
             "candidates": len(cands),
             "candidates_by_declared_stratum": dict(Counter(str(c.get("declared_stratum")) for c in cands)),
             "filtered_passed": sum(1 for r in filtered if r.get("passed")),
             "filtered_rejected_by_reason": dict(Counter(r.get("reason") for r in filtered if not r.get("passed"))),
+            "entity_rejections_by_base_lang": dict(Counter(str(r.get("base_lang")) for r in filtered
+                                                            if r.get("reason") == "entities")),
+            "bases_with_candidates_by_names_rule": {
+                "names_required": len({r["base_id"] for r in filtered if r.get("names_required")}),
+                "names_skipped": len({r["base_id"] for r in filtered if not r.get("names_required")})},
             "demoted_deep_to_shallow": sum(1 for r in filtered if r.get("demoted")),
             "judge_calls": dict(Counter(j.get("status") for j in judgements)),
             "judge_refusal_reasons": dict(Counter(j.get("refusal_reason") for j in judgements if j.get("status") == "refusal")),
@@ -1421,10 +1610,20 @@ def write_manifest(rt: Runtime, bases: list[Base] | None = None) -> dict[str, An
                                for m in sorted({str(r.get("model")) for r in spend})},
                   "budget_usd": rt.llm["budget_usd"], "spend_file": str(rt.paths.spend.relative_to(rt.paths.root))
                   if rt.paths.spend.is_relative_to(rt.paths.root) else str(rt.paths.spend)},
-        "files": {p.name: sha256_file(p) for p in (rt.paths.bases, rt.paths.candidates, rt.paths.judgements, rt.paths.csv)
+        "files": {p.name: sha256_file(p) for p in (rt.paths.bases, rt.paths.calls, rt.paths.judgements, rt.paths.csv)
                   if p.exists()},
     }
     atomic_write_json(rt.paths.manifest, manifest)
+    # results/paraphrases.json: the same numbers without any word list or text, for scripts/make_report.py
+    # (CLAUDE.md: report numbers come only from results/*.json).
+    results = {k: manifest[k] for k in ("generated", "seed", "dates", "prompts_sha256", "filters", "per_generator_call",
+                                         "max_accepted_per_base", "counts", "rates", "judge_agreement", "spend", "files")}
+    results["models"] = {**manifest["models"], "generators": [g["model"] for g in rt.generators], "judges": judge_models}
+    results["banned_words"] = {"n_starter": len(banned["starter"]), "n_chi2_extra": len(banned["chi2_extra"]),
+                               "n_final": len(banned["final"]), "chi2_source": banned.get("source")}
+    results["manifest"] = str(rt.paths.manifest.relative_to(rt.paths.root)) if rt.paths.manifest.is_relative_to(rt.paths.root) \
+        else str(rt.paths.manifest)
+    atomic_write_json(rt.paths.results_json, results)
     return manifest
 
 
@@ -1441,10 +1640,11 @@ def _judge_agreement(judgements: list[dict[str, Any]], judge_models: list[str]) 
 
 # ================================================================================================= orchestration
 
-def run_all(rt: Runtime, smoke: bool = False, limit: int | None = None) -> dict[str, Any]:
+def run_all(rt: Runtime, limit: int | None = None) -> dict[str, Any]:
     """``all``: bases, then per base (interleaved across kinds) generate -> filter -> judge, so that a budget stop
-    leaves a complete, balanced prefix with judgements; then the global filter rewrite, finalize, manifest."""
-    bases, bstats = build_bases(rt, smoke)
+    leaves a complete, balanced prefix with judgements; then ``results/spend.json``, the global filter rewrite,
+    finalize, manifest. A rerun repeats no decisive call (calls.jsonl / judgements.jsonl are the ledgers)."""
+    bases, bstats = build_bases(rt)
     banned = final_banned_list(rt)
     matcher = BannedMatcher(banned["final"])
     f = rt.pcfg["filters"]
@@ -1480,6 +1680,7 @@ def run_all(rt: Runtime, smoke: bool = False, limit: int | None = None) -> dict[
         totals.update({f"judge_{k}": v for k, v in j.items()})
         if stopped:
             break
+    refresh_spend_json(rt)               # before the offline stages: a crash there must not leave spend.json stale
     fstats = filter_stage(rt, bases)
     fin = finalize_stage(rt, bases)
     man = write_manifest(rt, bases)
@@ -1489,32 +1690,43 @@ def run_all(rt: Runtime, smoke: bool = False, limit: int | None = None) -> dict[
 
 def main(argv: list[str] | None = None) -> int:
     """CLI of design §7; the transport is built only for the stages that call the API. Exit code 3 = stopped by
-    the budget (like the trace runner), so ``scripts/gen_paraphrases.sh`` can be re-run after a top-up."""
+    the budget (like the trace runner), so ``scripts/gen_paraphrases.sh`` can be re-run after a top-up; 2 = a
+    required input or an earlier stage's output is missing. ``results/spend.json`` is refreshed after every API
+    stage even when it ends in an exception."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("cmd", choices=["bases", "generate", "filter", "judge", "finalize", "manifest", "all"])
-    ap.add_argument("--smoke", action="store_true", help="first smoke.paraphrase_bases bases per kind -> data/paraphrases/smoke/")
     ap.add_argument("--limit", type=int, default=None, help="process at most N bases in this invocation")
     ap.add_argument("--seed", type=int, default=0, help="global seed whose `paraphrase` child orders the selection")
+    ap.add_argument("--allow-partial", action="store_true",
+                    help="build bases although an expected input is missing (recorded in bases_check.json and the manifest)")
     args = ap.parse_args(argv)
     cfg = load_configs()
-    rt = Runtime(cfg=cfg, paths=Paths.from_cfg(cfg, smoke=args.smoke), global_seed=args.seed)
-    if args.cmd in ("generate", "judge", "all"):
+    rt = Runtime(cfg=cfg, paths=Paths.from_cfg(cfg), global_seed=args.seed, allow_partial=args.allow_partial)
+    api_stage = args.cmd in ("generate", "judge", "all")
+    if api_stage:
         rt.transport = make_transport(rt)
-    if args.cmd == "bases":
-        _, out = build_bases(rt, args.smoke)
-    elif args.cmd == "generate":
-        bases, _ = build_bases(rt, args.smoke)
-        out = generate_stage(rt, bases, args.limit)
-    elif args.cmd == "filter":
-        out = filter_stage(rt)
-    elif args.cmd == "judge":
-        out = judge_stage(rt, limit=args.limit)
-    elif args.cmd == "finalize":
-        out = finalize_stage(rt)
-    elif args.cmd == "manifest":
-        out = write_manifest(rt)["counts"]
-    else:
-        out = run_all(rt, args.smoke, args.limit)
+    try:
+        if args.cmd == "bases":
+            _, out = build_bases(rt)
+        elif args.cmd == "generate":
+            bases, _ = build_bases(rt)
+            out = generate_stage(rt, bases, args.limit)
+        elif args.cmd == "filter":
+            out = filter_stage(rt)
+        elif args.cmd == "judge":
+            out = judge_stage(rt, limit=args.limit)
+        elif args.cmd == "finalize":
+            out = finalize_stage(rt)
+        elif args.cmd == "manifest":
+            out = write_manifest(rt)["counts"]
+        else:
+            out = run_all(rt, args.limit)
+    except MissingInput as err:
+        print(f"[paraphrases] missing input: {err}", file=sys.stderr)
+        return 2
+    finally:
+        if api_stage:
+            refresh_spend_json(rt)
     print(json.dumps(out, indent=1, sort_keys=True, default=str))   # counts and statuses only, never texts
     stopped = out.get("stopped") if isinstance(out, dict) else None
     return 3 if stopped else 0

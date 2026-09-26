@@ -38,3 +38,24 @@ def test_pool_composition(cfg):
     assert pools["p_val"]["target_min_docs"] == target and pools["p_val"]["meets_target"] is False
     assert pools["p_test"]["shortfall"] == target - 5
     assert pools["notinject"]["n"] == 1
+
+
+def test_p_val_deepset_switch(cfg, monkeypatch):
+    """pools.p_val_deepset: 'val' (default, design §2) vs 'train' (ТЗ 1.8 literal); the choice is cited."""
+    docs = pd.DataFrame([
+        _doc("deep:train:0", "deep", "train", 0), _doc("deep:train:1", "deep", "val", 0),
+        _doc("deep:train:2", "deep", "train", 1), _doc("deep:test:0", "deep", "test", 0),
+    ])
+    base = dict(cfg.default["pools"])
+    base.pop("p_val_deepset", None)
+    monkeypatch.setitem(cfg.default, "pools", base)
+    p = build_pools(docs, cfg)
+    assert p["p_val"]["doc_ids"] == ["deep:train:1"] and p["p_val"]["p_val_deepset"] == "val"
+    assert "p_val_deepset=val" in p["p_val"]["definition"]
+    monkeypatch.setitem(cfg.default, "pools", dict(base, p_val_deepset="train"))
+    p = build_pools(docs, cfg)
+    assert p["p_val"]["doc_ids"] == ["deep:train:0", "deep:train:1"] and "p_val_deepset=train" in p["p_val"]["definition"]
+    monkeypatch.setitem(cfg.default, "pools", dict(base, p_val_deepset="all"))
+    import pytest
+    with pytest.raises(ValueError):
+        build_pools(docs, cfg)

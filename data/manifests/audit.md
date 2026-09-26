@@ -1,0 +1,140 @@
+# Аудит данных (ТЗ 1.2)
+Стадия: `without-traces`; smoke: `False`. Только счётчики: тексты документов в аудит не попадают.
+
+## Документы по источникам
+| источник | документов | инъекции | чистые | из них E6-варианты | train | val | test | выпало по дедупу |
+|---|---|---|---|---|---|---|---|---|
+| bipia | 7438 | 7260 | 178 | 7082 | 0 | 1598 | 5840 | 318 |
+| deep | 662 | 263 | 399 | 0 | 436 | 110 | 116 | 1 |
+| notinject | 339 | 0 | 339 | 0 | 0 | 0 | 339 | 0 |
+
+## Языки (langdetect, сид из конфига)
+| источник | en | non-en | unk | топ кодов |
+|---|---|---|---|---|
+| bipia | 7300 | 138 | 0 | en:7300, id:46, de:46, sk:46 |
+| deep | 355 | 307 | 1 | en:355, de:265, es:7, af:6, nl:5, id:4 |
+| notinject | 254 | 85 | 0 | en:254, zh-cn:73, ko:9, ru:1, es:1, bg:1 |
+
+Доля немецкого в deepset:
+
+| часть | документов | de | доля de | en |
+|---|---|---|---|---|
+| test | 116 | 46 | 39.7 % | 65 |
+| train | 546 | 219 | 40.1 % | 290 |
+| all | 662 | 265 | 40.0 % | 355 |
+
+## Длины нормализованного текста (символы)
+| источник | min | медиана | среднее | max |
+|---|---|---|---|---|
+| bipia | 69 | 792 | 906.1 | 3524 |
+| deep | 7 | 65 | 118.8 | 4545 |
+| notinject | 11 | 90 | 87.3 | 233 |
+
+## Окна (ТЗ 1.3)
+| источник | окон | окон на документ | окна-инъекции | окна-чистые | исключено дедупом |
+|---|---|---|---|---|---|
+| bipia | 36322 | 4.88 | 8742 | 27580 | 1236 |
+| deep | 777 | 1.17 | 372 | 405 | 1 |
+| notinject | 339 | 1.0 | 0 | 339 | 0 |
+
+## Состав NotInject
+| подмножество | Common Queries | Multilingual | Technique Queries | Virtual Creation | non-en |
+|---|---|---|---|---|---|
+| one | 58 | 25 | 16 | 14 | 25 |
+| three | 19 | 29 | 41 | 24 | 29 |
+| two | 49 | 30 | 30 | 4 | 31 |
+
+## BIPIA (ТЗ 1.4)
+| задача | строк в test.jsonl | уникальных контекстов | кластеров (почти-дубли слиты) | имён атак | строк атак | документов (основной тест) | документов E6 (доп.) |
+|---|---|---|---|---|---|---|---|
+| code | 50 | 50 | 50 | 10 | 50 | 100 | 1450 |
+| email | 50 | 44 | 32 | 15 | 75 | 88 | 1936 |
+| table | 100 | 84 | 84 | 15 | 75 | 168 | 3696 |
+
+Контексты: val 33, test 133; позиции ['start', 'middle', 'end']; правило `middle`: начало предложения по regex `[.!?]+[кавычки]*\s+` (плюс смещение 0), выбранное RNG контекста.
+- задача `abstract` выпала: context corpus not in the BIPIA repository (BLOCKERS B4)
+- задача `qa` выпала: context corpus not in the BIPIA repository (BLOCKERS B4)
+
+## Дедупликация (ТЗ 1.7)
+- правило: Жаккар >= 0.8 по символьным 5-граммам, кандидаты MinHash LSH (128 перестановок, b=25, r=5, вероятность кандидата на пороге 0.999951), проверка точным Жаккаром
+- окон в тесте: 30092, эталонных (train+val): 7346, исключено тестовых окон: 1237 (по источникам: {'bipia': 1236, 'deep': 1}; пары источников: {'bipia->bipia': 1236, 'deep->deep': 1})
+- документов выпало: {'positives_all_excluded': 186, 'no_windows_left': 1, 'bipia_pairs': 132, 'bipia_contexts': 4}; по источнику/варианту/метке: {'bipia/e6/1': 310, 'bipia/main/0': 4, 'bipia/main/1': 4, 'deep/main/0': 1}
+
+## Пулы негативов (ТЗ 1.8)
+- p_val: 107 документов {'bipia': 38, 'deep': 69}; цель 2000, не достигнута; deepset-часть: val
+- p_test: 191 документов {'bipia': 136, 'deep': 55}; цель 2000, не достигнута
+
+## Пересечение с обучающими данными промышленных детекторов (ТЗ 3.2)
+Открытый обучающий набор PIGuard (`data/raw/piguard_train/train.json`, чтение журналировано как `external`): записей 76735, пустых 3, уникальных текстов 73520, окон при сканировании 197578. Правило: exact Jaccard >= 0.8 over character 5-gram shingles (dedup.jaccard, ТЗ 1.7); кандидаты — MinHash LSH (b=25, r=5).
+
+Состав train.json по полю `source` (метка 0 / 1):
+
+| тег PIGuard | 0 | 1 |
+|---|---|---|
+| Alpaca | 4000 | 0 |
+| BIPIA | 558 | 558 |
+| ChatGPT-Jailbreak-Prompts | 0 | 79 |
+| InjecAgent | 0 | 111 |
+| LLM Augmented set | 0 | 435 |
+| Prompt-Injection-Mixed-Techniques | 0 | 1174 |
+| Question Set | 643 | 1643 |
+| StruQ | 0 | 20 |
+| TaskTracker | 11386 | 3316 |
+| awesome-chatgpt-prompts | 170 | 0 |
+| chatbot_instruction_prompts | 16000 | 0 |
+| grok-conversation-harmless | 4000 | 0 |
+| hackaprompt-dataset | 0 | 5000 |
+| jailbreak-classification | 517 | 527 |
+| no_robots | 1500 | 0 |
+| open-instruct | 12000 | 0 |
+| over-defense | 762 | 0 |
+| prompt-injections | 343 | 203 |
+| safe-guard-prompt-injection | 5740 | 2496 |
+| ultrachat_200k | 3000 | 0 |
+| vigil-jailbreak-ada-002 | 0 | 104 |
+| xtest-v2-copy | 450 | 0 |
+
+Наши документы и окна с почти-дубликатом в train.json (по источнику, разбиению E1 и метке; метка документа для столбцов документов, метка окна (ТЗ 1.3) для столбцов окон — у документов E6 есть чистые окна контекста; `bipia_e6` — варианты E6):
+
+| источник | split | метка | документов | совпало документов | доля | окон | совпало окон | доля окон | документов с совпавшим окном |
+|---|---|---|---|---|---|---|---|---|---|
+| bipia | test | 0 | 140 | 14 | 0.1 | 1170 | 55 | 0.047 | 22 |
+| bipia | test | 1 | 140 | 5 | 0.0357 | 174 | 2 | 0.0115 | 17 |
+| bipia | val | 0 | 38 | 7 | 0.1842 | 251 | 23 | 0.0916 | 10 |
+| bipia | val | 1 | 38 | 4 | 0.1053 | 45 | 2 | 0.0444 | 8 |
+| bipia_e6 | test | 0 | - | - | - | 21564 | 975 | 0.0452 | - |
+| bipia_e6 | test | 1 | 5560 | 253 | 0.0455 | 6712 | 64 | 0.0095 | 826 |
+| bipia_e6 | val | 0 | - | - | - | 4595 | 473 | 0.1029 | - |
+| bipia_e6 | val | 1 | 1522 | 149 | 0.0979 | 1811 | 17 | 0.0094 | 383 |
+| deep | test | 0 | 56 | 1 | 0.0179 | 58 | 1 | 0.0172 | 1 |
+| deep | test | 1 | 60 | 3 | 0.05 | 75 | 6 | 0.08 | 3 |
+| deep | train | 0 | 274 | 274 | 1.0 | 277 | 277 | 1.0 | 274 |
+| deep | train | 1 | 162 | 162 | 1.0 | 249 | 249 | 1.0 | 162 |
+| deep | val | 0 | 69 | 69 | 1.0 | 70 | 70 | 1.0 | 69 |
+| deep | val | 1 | 41 | 41 | 1.0 | 48 | 48 | 1.0 | 41 |
+| notinject | test | 0 | 339 | 0 | 0.0 | 339 | 0 | 0.0 | 0 |
+
+Совпавшие документы по тегу PIGuard: bipia: {'BIPIA': 30}; bipia_e6: {'BIPIA': 402}; deep: {'ChatGPT-Jailbreak-Prompts': 4, 'Question Set': 3, 'awesome-chatgpt-prompts': 7, 'chatbot_instruction_prompts': 1, 'jailbreak-classification': 4, 'open-instruct': 1, 'prompt-injections': 547, 'safe-guard-prompt-injection': 10, 'vigil-jailbreak-ada-002': 4}
+
+Точное вхождение (containment) против записей с тегом источника-двойника:
+- deep vs ['prompt-injections'] (546 записей, 662 наших документов): наш документ внутри записи PIGuard — 554 (0.8369), запись PIGuard внутри нашего документа — 553 (0.8353); по split: {'test': {'documents': 116, 'ours_in_piguard': 8, 'piguard_in_ours': 7}, 'train': {'documents': 436, 'ours_in_piguard': 436, 'piguard_in_ours': 436}, 'val': {'documents': 110, 'ours_in_piguard': 110, 'piguard_in_ours': 110}}
+- bipia vs ['BIPIA'] (794 записей, 356 наших документов): наш документ внутри записи PIGuard — 43 (0.1208), запись PIGuard внутри нашего документа — 70 (0.1966); по split: {'val': {'documents': 76, 'ours_in_piguard': 14, 'piguard_in_ours': 20}, 'test': {'documents': 280, 'ours_in_piguard': 29, 'piguard_in_ours': 50}}
+- dojo vs ['InjecAgent']: nothing to compare (записей PIGuard 111, наших документов 0)
+- dyn vs ['InjecAgent']: nothing to compare (записей PIGuard 111, наших документов 0)
+
+Ограничение: ТЗ 1.3 windows (size 256, stride 192) of both sides; alignment-sensitive, a lower bound.
+
+Карточки моделей (статично):
+- `protectai_v2` (protectai/deberta-v3-base-prompt-injection-v2): обучающие наборы по карточке — natolambert/xstest-v2-copy, VMware/open-instruct, alespalla/chatbot_instruction_prompts, HuggingFaceH4/grok-conversation-harmless, Harelix/Prompt-Injection-Mixed-Techniques-2024, OpenSafetyLab/Salad-Data, jackhhao/jailbreak-classification; пересечение по именам: none of the listed datasets is deepset/prompt-injections, BIPIA, NotInject, AgentDojo or AgentDyn; the card's list is not exhaustive, the open training data is not published, so no measured overlap is possible
+- `piguard` (leolee99/PIGuard): обучающие наборы по карточке — the authors' own train.json (data/raw/piguard_train/train.json; composition measured below by its `source` tag); пересечение по именам: train.json tags 546 records `prompt-injections` (deepset train: 343 benign / 203 injections) and 1116 records `BIPIA`; NotInject is the authors' own over-defense benchmark
+- `prompt_guard_2` (meta-llama/Llama-Prompt-Guard-2-86M): обучающие наборы по карточке — not disclosed on the card; optional model, skipped without HF access (BLOCKERS B2); пересечение по именам: unknown
+
+Угрозы валидности (ТЗ 3.2):
+- BIPIA is part of the PIGuard authors' test set and 1116 BIPIA-tagged records are in the PIGuard open training set
+- NotInject, PIGuard and AgentDyn share a first author: the over-defense set and the agent benchmark were built by the team that trained one of the comparators
+- deepset/prompt-injections train (546 records, 343/203) is in the PIGuard open training set under the tag `prompt-injections`; E1 trains FlyGuard on the same 546 documents, so on deepset both sides saw the train split
+- ProtectAI v2's card lists datasets by name only; an unmeasured overlap with deepset or BIPIA cannot be excluded
+- No direction of the shift is assumed (ТЗ 3.2); the counts above are reported, not corrected for
+
+## Пропущенные источники и замечания
+- dojo, dyn, para skipped: stage --without-traces

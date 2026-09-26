@@ -10,7 +10,6 @@ Gaussian sign matrix of ТЗ 3.3 costs the same multiply-adds as M and is used o
 from __future__ import annotations
 
 import json
-import warnings
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -150,15 +149,15 @@ def random_same_density(M: sp.spmatrix | np.ndarray, seed: int) -> sp.csr_matrix
 def curveball_n_trades(M: sp.spmatrix | np.ndarray, swaps_per_edge: float | None = None) -> int:
     """n_trades = ceil(swaps_per_edge x nnz(M)) (ТЗ 2.2 ">= 5·E обменов"; ``expansion.curveball.swaps_per_edge``).
 
-    This is the number of *effective* exchanges :func:`curveball` performs (trades that change the matrix), so
-    the literal ТЗ count holds whichever way "обмен" is read; Strona's own convention counts attempted trades,
-    of which ~4 % are no-ops on the measured matrix.
+    This is the number of *attempted* trades a :func:`curveball` chain performs — Strona's convention, fixed in
+    ASSUMPTIONS A14 ("⌈5·E⌉ попыток обмена, счёт попыток по Strona et al."). On the measured matrix ~4 % of
+    attempts are no-ops; the effective count is reported in the chain's ``stats``.
     """
     spe = float(_expansion_cfg()["curveball"]["swaps_per_edge"] if swaps_per_edge is None else swaps_per_edge)
     return int(np.ceil(spe * as_binary_csr(M).nnz))
 
 
-_CURVEBALL_MAX_ATTEMPT_FACTOR = 20  # attempts are capped at this multiple of n_trades (degenerate matrices)
+_CURVEBALL_PAIR_BLOCK = 1 << 18  # pairs drawn per RNG call (bounds memory; part of the deterministic scheme)
 
 
 def _distinct_pairs(rng: np.random.Generator, n: int, size: int) -> np.ndarray:
@@ -178,39 +177,32 @@ def curveball(M: sp.spmatrix | np.ndarray, n_trades: int, seed: int,
     the inputs held by exactly one of them and redistributes the pool uniformly at random so that i and j keep
     their in-degrees; every pooled input goes to exactly one of the two rows, so the input (glomerulus)
     out-degrees are preserved too. Pools are sorted before the RNG touches them so nothing depends on Python set
-    iteration order; pairs are drawn in blocks from one generator, so the result is a deterministic function of
-    ``(M, n_trades, seed)``.
+    iteration order; pairs are drawn in fixed-size blocks from one generator, so the result is a deterministic
+    function of ``(M, n_trades, seed)``.
 
-    Counting. ``n_trades`` (from :func:`curveball_n_trades`, swaps_per_edge x nnz) is the number of *effective*
-    trades — trades that change the matrix. A trade is a no-op when one row's private inputs are empty (one set
-    contains the other) or when the random split re-draws the original assignment; on the measured matrix these
-    are ~0.8 % and ~3 % of attempts. Strona's convention counts attempted trades, under which a literal
-    ">= 5·E обменов" would be missed by ~4 %; counting effective trades satisfies the ТЗ under either reading.
-    Uniformity caveat: Carstens 2015 proves the uniform stationary law for the lazy chain with a *fixed* number
-    of attempted trades (no-ops are self-loops of a symmetric transition matrix); stopping at the N-th effective
-    trade samples the embedded jump chain instead, whose stationary law is proportional to 1 - p_hold(X). With
-    p_hold ~ 0.04 on the measured matrix and margins fixed, the relative variation of that weight across matrices
-    is well below the residual mixing error at 5·E trades, so the bias is negligible for the E4 null; the
-    attempted/effective counts are returned with ``return_stats=True`` so the report can state them. Attempts are
-    capped at ``_CURVEBALL_MAX_ATTEMPT_FACTOR x n_trades``: a matrix on which no trade can change anything (all
-    rows identical or nested) would otherwise never terminate; the cap is recorded in ``stats["capped"]`` and
-    warned about, never silent.
+    Counting (ASSUMPTIONS A14): ``n_trades`` is the number of *attempted* trades, Strona's convention. A trade is
+    a no-op when one row's private inputs are empty (one set contains the other) or when the random split
+    re-draws the original assignment (~0.8 % and ~3 % of attempts on the measured matrix); no-ops count as
+    attempts and are tallied in ``stats`` (``n_subset_noop``, ``n_redraw_noop``, ``n_effective``) so the report
+    can state the effective number of exchanges. A fixed number of attempts is also the chain for which Carstens
+    2015 proves the uniform stationary law (no-ops are the self-loops of a symmetric, lazy transition matrix);
+    stopping at the N-th *effective* trade would sample the embedded jump chain instead. A matrix on which no
+    trade can change anything (all rows identical or nested) simply returns unchanged after ``n_trades``
+    attempts, with ``n_effective == 0`` — visible in the stats, never an infinite loop.
     """
     B = as_binary_csr(M)
     n, d = B.shape
     n_trades = int(n_trades)
-    stats: dict[str, Any] = {"n_target": n_trades, "n_attempted": 0, "n_effective": 0, "n_subset_noop": 0,
-                             "n_redraw_noop": 0, "capped": False}
+    stats: dict[str, Any] = {"n_trades": n_trades, "n_attempted": 0, "n_effective": 0, "n_subset_noop": 0,
+                             "n_redraw_noop": 0}
     if n < 2 or n_trades <= 0:
         return (B, stats) if return_stats else B
     rows: list[set[int]] = [set(B.indices[B.indptr[i]:B.indptr[i + 1]].tolist()) for i in range(n)]
     rng = np.random.default_rng(int(seed))
-    max_attempts = _CURVEBALL_MAX_ATTEMPT_FACTOR * n_trades
-    block = n_trades
-    while stats["n_effective"] < n_trades and stats["n_attempted"] < max_attempts:
-        block = min(block, max_attempts - stats["n_attempted"])
+    remaining = n_trades
+    while remaining > 0:
+        block = min(remaining, _CURVEBALL_PAIR_BLOCK)
         for a, b in _distinct_pairs(rng, n, block).tolist():
-            stats["n_attempted"] += 1
             A, Bb = rows[a], rows[b]
             shared = A & Bb
             a_only, b_only = A - shared, Bb - shared
@@ -227,13 +219,8 @@ def curveball(M: sp.spmatrix | np.ndarray, n_trades: int, seed: int,
             rows[a] = new_a
             rows[b] = shared | {pool[j] for j in perm[na:]}
             stats["n_effective"] += 1
-            if stats["n_effective"] >= n_trades:
-                break
-        block = max(256, n_trades // 16)  # top-up blocks for the ~4 % of no-ops
-    if stats["n_effective"] < n_trades:
-        stats["capped"] = True
-        warnings.warn(f"curveball: only {stats['n_effective']} of {n_trades} effective trades after "
-                      f"{stats['n_attempted']} attempts (degenerate matrix?)", RuntimeWarning, stacklevel=2)
+        remaining -= block
+    stats["n_attempted"] = n_trades
     out = _rows_to_csr(rows, (n, d))
     return (out, stats) if return_stats else out
 

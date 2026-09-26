@@ -1,0 +1,517 @@
+{
+ "document_level": {
+  "bipia": {
+   "test": {
+    "0": {
+     "documents": 140,
+     "documents_matched": 14,
+     "share": 0.1
+    },
+    "1": {
+     "documents": 140,
+     "documents_matched": 5,
+     "share": 0.0357
+    }
+   },
+   "total": {
+    "documents": 356,
+    "documents_matched": 30,
+    "share": 0.0843
+   },
+   "val": {
+    "0": {
+     "documents": 38,
+     "documents_matched": 7,
+     "share": 0.1842
+    },
+    "1": {
+     "documents": 38,
+     "documents_matched": 4,
+     "share": 0.1053
+    }
+   }
+  },
+  "bipia_e6": {
+   "test": {
+    "1": {
+     "documents": 5560,
+     "documents_matched": 253,
+     "share": 0.0455
+    }
+   },
+   "total": {
+    "documents": 7082,
+    "documents_matched": 402,
+    "share": 0.0568
+   },
+   "val": {
+    "1": {
+     "documents": 1522,
+     "documents_matched": 149,
+     "share": 0.0979
+    }
+   }
+  },
+  "deep": {
+   "test": {
+    "0": {
+     "documents": 56,
+     "documents_matched": 1,
+     "share": 0.0179
+    },
+    "1": {
+     "documents": 60,
+     "documents_matched": 3,
+     "share": 0.05
+    }
+   },
+   "total": {
+    "documents": 662,
+    "documents_matched": 550,
+    "share": 0.8308
+   },
+   "train": {
+    "0": {
+     "documents": 274,
+     "documents_matched": 274,
+     "share": 1.0
+    },
+    "1": {
+     "documents": 162,
+     "documents_matched": 162,
+     "share": 1.0
+    }
+   },
+   "val": {
+    "0": {
+     "documents": 69,
+     "documents_matched": 69,
+     "share": 1.0
+    },
+    "1": {
+     "documents": 41,
+     "documents_matched": 41,
+     "share": 1.0
+    }
+   }
+  },
+  "notinject": {
+   "test": {
+    "0": {
+     "documents": 339,
+     "documents_matched": 0,
+     "share": 0.0
+    }
+   },
+   "total": {
+    "documents": 339,
+    "documents_matched": 0,
+    "share": 0.0
+   }
+  }
+ },
+ "document_level_by_piguard_source": {
+  "bipia": {
+   "BIPIA": 30
+  },
+  "bipia_e6": {
+   "BIPIA": 402
+  },
+  "deep": {
+   "ChatGPT-Jailbreak-Prompts": 4,
+   "Question Set": 3,
+   "awesome-chatgpt-prompts": 7,
+   "chatbot_instruction_prompts": 1,
+   "jailbreak-classification": 4,
+   "open-instruct": 1,
+   "prompt-injections": 547,
+   "safe-guard-prompt-injection": 10,
+   "vigil-jailbreak-ada-002": 4
+  }
+ },
+ "journal_split": "external",
+ "model_cards": {
+  "piguard": {
+   "model": "leolee99/PIGuard",
+   "named_overlap_with_our_sources": "train.json tags 546 records `prompt-injections` (deepset train: 343 benign / 203 injections) and 1116 records `BIPIA`; NotInject is the authors' own over-defense benchmark",
+   "training_datasets_on_card": [
+    "the authors' own train.json (data/raw/piguard_train/train.json; composition measured below by its `source` tag)"
+   ]
+  },
+  "prompt_guard_2": {
+   "model": "meta-llama/Llama-Prompt-Guard-2-86M",
+   "named_overlap_with_our_sources": "unknown",
+   "training_datasets_on_card": [
+    "not disclosed on the card; optional model, skipped without HF access (BLOCKERS B2)"
+   ]
+  },
+  "protectai_v2": {
+   "model": "protectai/deberta-v3-base-prompt-injection-v2",
+   "named_overlap_with_our_sources": "none of the listed datasets is deepset/prompt-injections, BIPIA, NotInject, AgentDojo or AgentDyn; the card's list is not exhaustive, the open training data is not published, so no measured overlap is possible",
+   "training_datasets_on_card": [
+    "natolambert/xstest-v2-copy",
+    "VMware/open-instruct",
+    "alespalla/chatbot_instruction_prompts",
+    "HuggingFaceH4/grok-conversation-harmless",
+    "Harelix/Prompt-Injection-Mixed-Techniques-2024",
+    "OpenSafetyLab/Salad-Data",
+    "jackhhao/jailbreak-classification"
+   ]
+  }
+ },
+ "piguard_train": {
+  "by_source_label": {
+   "Alpaca": {
+    "0": 4000
+   },
+   "BIPIA": {
+    "0": 558,
+    "1": 558
+   },
+   "ChatGPT-Jailbreak-Prompts": {
+    "1": 79
+   },
+   "InjecAgent": {
+    "1": 111
+   },
+   "LLM Augmented set": {
+    "1": 435
+   },
+   "Prompt-Injection-Mixed-Techniques": {
+    "1": 1174
+   },
+   "Question Set": {
+    "0": 643,
+    "1": 1643
+   },
+   "StruQ": {
+    "1": 20
+   },
+   "TaskTracker": {
+    "0": 11386,
+    "1": 3316
+   },
+   "awesome-chatgpt-prompts": {
+    "0": 170
+   },
+   "chatbot_instruction_prompts": {
+    "0": 16000
+   },
+   "grok-conversation-harmless": {
+    "0": 4000
+   },
+   "hackaprompt-dataset": {
+    "1": 5000
+   },
+   "jailbreak-classification": {
+    "0": 517,
+    "1": 527
+   },
+   "no_robots": {
+    "0": 1500
+   },
+   "open-instruct": {
+    "0": 12000
+   },
+   "over-defense": {
+    "0": 762
+   },
+   "prompt-injections": {
+    "0": 343,
+    "1": 203
+   },
+   "safe-guard-prompt-injection": {
+    "0": 5740,
+    "1": 2496
+   },
+   "ultrachat_200k": {
+    "0": 3000
+   },
+   "vigil-jailbreak-ada-002": {
+    "1": 104
+   },
+   "xtest-v2-copy": {
+    "0": 450
+   }
+  },
+  "distinct_texts": 73520,
+  "empty_texts": 3,
+  "records": 76735,
+  "text_field": "prompt",
+  "text_length": {
+   "max": 55114,
+   "mean": 439.8,
+   "median": 142,
+   "min": 1
+  },
+  "windows_scanned": 197578
+ },
+ "rule": {
+  "candidates": {
+   "candidate_recall_at_threshold": 0.999951,
+   "candidate_recall_floor": 0.9999,
+   "lsh_bands": 25,
+   "lsh_equivalent_threshold": 0.5253,
+   "lsh_rows": 5,
+   "minhash_perm": 128,
+   "verification": "exact Jaccard >= threshold over the same shingles"
+  },
+  "containment": "exact |A ∩ B| / |A| >= 0.8 against the tagged records",
+  "decision": "exact Jaccard >= 0.8 over character 5-gram shingles (dedup.jaccard, ТЗ 1.7)",
+  "index_side": "our documents / windows; PIGuard streamed as queries",
+  "unit_document": "whole normalised document text vs whole PIGuard prompt",
+  "unit_window": "ТЗ 1.3 windows (size 256, stride 192) of both sides; alignment-sensitive, a lower bound"
+ },
+ "skipped": false,
+ "targeted_containment": {
+  "bipia": {
+   "by_split": {
+    "test": {
+     "documents": 280,
+     "ours_in_piguard": 29,
+     "piguard_in_ours": 50
+    },
+    "val": {
+     "documents": 76,
+     "ours_in_piguard": 14,
+     "piguard_in_ours": 20
+    }
+   },
+   "documents": 356,
+   "ours_in_piguard": 43,
+   "ours_in_piguard_share": 0.1208,
+   "piguard_in_ours": 70,
+   "piguard_in_ours_share": 0.1966,
+   "piguard_texts": 794,
+   "tags": [
+    "BIPIA"
+   ]
+  },
+  "deep": {
+   "by_split": {
+    "test": {
+     "documents": 116,
+     "ours_in_piguard": 8,
+     "piguard_in_ours": 7
+    },
+    "train": {
+     "documents": 436,
+     "ours_in_piguard": 436,
+     "piguard_in_ours": 436
+    },
+    "val": {
+     "documents": 110,
+     "ours_in_piguard": 110,
+     "piguard_in_ours": 110
+    }
+   },
+   "documents": 662,
+   "ours_in_piguard": 554,
+   "ours_in_piguard_share": 0.8369,
+   "piguard_in_ours": 553,
+   "piguard_in_ours_share": 0.8353,
+   "piguard_texts": 546,
+   "tags": [
+    "prompt-injections"
+   ]
+  },
+  "dojo": {
+   "documents": 0,
+   "note": "nothing to compare",
+   "piguard_texts": 111,
+   "tags": [
+    "InjecAgent"
+   ]
+  },
+  "dyn": {
+   "documents": 0,
+   "note": "nothing to compare",
+   "piguard_texts": 111,
+   "tags": [
+    "InjecAgent"
+   ]
+  }
+ },
+ "threats_to_validity": [
+  "BIPIA is part of the PIGuard authors' test set and 1116 BIPIA-tagged records are in the PIGuard open training set",
+  "NotInject, PIGuard and AgentDyn share a first author: the over-defense set and the agent benchmark were built by the team that trained one of the comparators",
+  "deepset/prompt-injections train (546 records, 343/203) is in the PIGuard open training set under the tag `prompt-injections`; E1 trains FlyGuard on the same 546 documents, so on deepset both sides saw the train split",
+  "ProtectAI v2's card lists datasets by name only; an unmeasured overlap with deepset or BIPIA cannot be excluded",
+  "No direction of the shift is assumed (ТЗ 3.2); the counts above are reported, not corrected for"
+ ],
+ "train_file": "data/raw/piguard_train/train.json",
+ "window_level": {
+  "bipia": {
+   "test": {
+    "0": {
+     "documents_all_windows_matched": 10,
+     "documents_with_matched_window": 22,
+     "share": 0.047,
+     "windows": 1170,
+     "windows_matched": 55
+    },
+    "1": {
+     "documents_all_windows_matched": 2,
+     "documents_with_matched_window": 17,
+     "share": 0.0115,
+     "windows": 174,
+     "windows_matched": 2
+    }
+   },
+   "total": {
+    "documents_all_windows_matched": 17,
+    "documents_with_matched_window": 57,
+    "share": 0.05,
+    "windows": 1640,
+    "windows_matched": 82
+   },
+   "val": {
+    "0": {
+     "documents_all_windows_matched": 4,
+     "documents_with_matched_window": 10,
+     "share": 0.0916,
+     "windows": 251,
+     "windows_matched": 23
+    },
+    "1": {
+     "documents_all_windows_matched": 1,
+     "documents_with_matched_window": 8,
+     "share": 0.0444,
+     "windows": 45,
+     "windows_matched": 2
+    }
+   }
+  },
+  "bipia_e6": {
+   "test": {
+    "0": {
+     "share": 0.0452,
+     "windows": 21564,
+     "windows_matched": 975
+    },
+    "1": {
+     "documents_all_windows_matched": 53,
+     "documents_with_matched_window": 826,
+     "share": 0.0095,
+     "windows": 6712,
+     "windows_matched": 64
+    }
+   },
+   "total": {
+    "documents_all_windows_matched": 59,
+    "documents_with_matched_window": 1209,
+    "share": 0.0441,
+    "windows": 34682,
+    "windows_matched": 1529
+   },
+   "val": {
+    "0": {
+     "share": 0.1029,
+     "windows": 4595,
+     "windows_matched": 473
+    },
+    "1": {
+     "documents_all_windows_matched": 6,
+     "documents_with_matched_window": 383,
+     "share": 0.0094,
+     "windows": 1811,
+     "windows_matched": 17
+    }
+   }
+  },
+  "deep": {
+   "test": {
+    "0": {
+     "documents_all_windows_matched": 1,
+     "documents_with_matched_window": 1,
+     "share": 0.0172,
+     "windows": 58,
+     "windows_matched": 1
+    },
+    "1": {
+     "documents_all_windows_matched": 2,
+     "documents_with_matched_window": 3,
+     "share": 0.08,
+     "windows": 75,
+     "windows_matched": 6
+    }
+   },
+   "total": {
+    "documents_all_windows_matched": 549,
+    "documents_with_matched_window": 550,
+    "share": 0.8378,
+    "windows": 777,
+    "windows_matched": 651
+   },
+   "train": {
+    "0": {
+     "documents_all_windows_matched": 274,
+     "documents_with_matched_window": 274,
+     "share": 1.0,
+     "windows": 277,
+     "windows_matched": 277
+    },
+    "1": {
+     "documents_all_windows_matched": 162,
+     "documents_with_matched_window": 162,
+     "share": 1.0,
+     "windows": 249,
+     "windows_matched": 249
+    }
+   },
+   "val": {
+    "0": {
+     "documents_all_windows_matched": 69,
+     "documents_with_matched_window": 69,
+     "share": 1.0,
+     "windows": 70,
+     "windows_matched": 70
+    },
+    "1": {
+     "documents_all_windows_matched": 41,
+     "documents_with_matched_window": 41,
+     "share": 1.0,
+     "windows": 48,
+     "windows_matched": 48
+    }
+   }
+  },
+  "notinject": {
+   "test": {
+    "0": {
+     "documents_all_windows_matched": 0,
+     "documents_with_matched_window": 0,
+     "share": 0.0,
+     "windows": 339,
+     "windows_matched": 0
+    }
+   },
+   "total": {
+    "documents_all_windows_matched": 0,
+    "documents_with_matched_window": 0,
+    "share": 0.0,
+    "windows": 339,
+    "windows_matched": 0
+   }
+  }
+ },
+ "window_level_by_piguard_source": {
+  "bipia": {
+   "BIPIA": 82
+  },
+  "bipia_e6": {
+   "BIPIA": 1529
+  },
+  "deep": {
+   "ChatGPT-Jailbreak-Prompts": 40,
+   "Question Set": 46,
+   "awesome-chatgpt-prompts": 15,
+   "chatbot_instruction_prompts": 1,
+   "jailbreak-classification": 43,
+   "open-instruct": 1,
+   "prompt-injections": 645,
+   "safe-guard-prompt-injection": 55,
+   "vigil-jailbreak-ada-002": 41
+  }
+ }
+}

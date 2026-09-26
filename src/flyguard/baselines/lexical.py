@@ -1,10 +1,13 @@
 """Lexical baselines of ТЗ 3.1 on the nose's features: TF-IDF + LR, kNN, nearest centroid, LR on N51-svd.
 
-All four follow ``common.WindowScorer``: ``fit(X_train, y_train, X_val=None, y_val=None)`` and ``score(X)`` in
-[0, 1]. They never compute features: ``TfidfLR``, ``KNN`` and ``NearestCentroid`` take the nose's N16k rows
-(log1p counts, rows summing to one — ТЗ 2.1 "общий вход TF-IDF, kNN и FlyHash"), ``LRSvd`` takes the 51-dim
-standardised SVD features (ТЗ 3.1 "LR на N51-svd без KC-слоя — потолок носа, пара для H1b"). The one statistic
-fitted here is TF-IDF's idf, and it is fitted on C_unl (ТЗ 1.9), passed in explicitly.
+All four follow ``common.WindowScorer``: ``fit(X_train, y_train, X_val=None, y_val=None, groups=None)`` and
+``score(X)`` in [0, 1]. They never compute features: ``TfidfLR``, ``KNN`` and ``NearestCentroid`` take the nose's
+N16k rows (log1p counts, rows summing to one — ТЗ 2.1 "общий вход TF-IDF, kNN и FlyHash"), ``LRSvd`` takes the
+51-dim standardised SVD features (ТЗ 3.1 "LR на N51-svd без KC-слоя — потолок носа, пара для H1b"). The one
+statistic fitted here is TF-IDF's idf, and it is fitted on C_unl (ТЗ 1.9), passed in explicitly. The two logistic
+regressions (``TfidfLR``, ``LRSvd``) are built by ``common.make_logreg`` — the same estimator as the MBON readout
+(``readout.linear`` in the config) — and choose C through ``common.select_c``, which needs ``groups``
+(``cluster_id``, else ``doc_id``, per train window) whenever no validation set is given.
 
 Detector names match ``configs/experiments/E1.yaml``: ``tfidf_lr``, ``knn1``/``knn5``, ``centroid``, ``lr_svd``.
 """
@@ -33,20 +36,24 @@ class TfidfLR:
     and ``log1p`` is applied here first. Both give the same tf-idf up to the per-row constant that L2
     normalisation removes; the flag exists so the engine cannot double-log by accident. idf is the smooth
     ``log((1 + N) / (1 + df)) + 1`` (scikit-learn's convention) over the document frequencies of ``X_unl`` =
-    C_unl (ТЗ 1.9), given in the constructor or via ``fit_idf``; if it is missing at ``fit`` time the idf falls
-    back to the train rows with a ``RuntimeWarning`` and ``idf_source_ == "train"`` so the deviation is visible.
-    C is chosen by validation AUC over ``cfg.default['baselines']['tfidf']['C_grid']`` (``common.select_c``).
+    C_unl (ТЗ 1.9), given in the constructor or via ``fit_idf``. ТЗ 1.9 names C_unl as *the* corpus of the idf,
+    so ``fit`` without a fitted idf raises ``ValueError``; only an explicit ``allow_train_idf=True`` (a documented
+    control, never the main runs) lets the idf fall back to the train rows, with a ``RuntimeWarning`` and
+    ``idf_source_ == "train"`` so the deviation reaches the results notes. C is chosen by validation AUC over
+    ``cfg.default['baselines']['tfidf']['C_grid']`` (``common.select_c``; ``c_source_``/``c_table_`` record how).
     """
 
     name = "tfidf_lr"
 
     def __init__(self, C_grid: Sequence[float] | None = None, seed: int = 0, X_unl: Any = None,
-                 tf: str = "n16k", cfg: Configs | None = None):
+                 tf: str = "n16k", cfg: Configs | None = None, allow_train_idf: bool = False):
         if tf not in ("n16k", "counts"):
             raise ValueError("tf must be 'n16k' or 'counts'")
         self.C_grid = [float(c) for c in C_grid] if C_grid is not None else _grid(cfg, "tfidf")
         self.seed = int(seed)
         self.tf = tf
+        self.cfg = cfg
+        self.allow_train_idf = bool(allow_train_idf)
         self.idf_: np.ndarray | None = None
         self.idf_source_: str | None = None
         self.C_: float | None = None
@@ -57,9 +64,16 @@ class TfidfLR:
             self.fit_idf(X_unl)
 
     def fit_idf(self, X_unl: Any) -> "TfidfLR":
-        """idf from the document frequencies of C_unl rows (nonzero pattern; identical for counts and N16k)."""
+        """idf from the document frequencies of C_unl rows (nonzero pattern; identical for counts and N16k).
+
+        The caller's matrix is left untouched (``as_matrix`` shares the buffers of a float64 CSR input): explicit
+        zeros are dropped from a *copy* before counting, so that C_unl rows used by other detectors keep their
+        stored pattern and so that duplicate entries of a non-canonical CSR are merged before the count.
+        """
         X = as_matrix(X_unl)
         if sp.issparse(X):
+            X = X.copy()
+            X.sum_duplicates()
             X.eliminate_zeros()
             df = np.bincount(X.indices, minlength=X.shape[1]).astype(np.float64)
         else:
@@ -85,18 +99,25 @@ class TfidfLR:
         X = X @ sp.diags(self.idf_) if sp.issparse(X) else X * self.idf_[None, :]
         return l2_normalize_rows(X)
 
-    def fit(self, X_train: Any, y_train: Any, X_val: Any = None, y_val: Any = None) -> "TfidfLR":
+    def fit(self, X_train: Any, y_train: Any, X_val: Any = None, y_val: Any = None,
+            groups: Any = None) -> "TfidfLR":
         if self.idf_ is None:
+            if not self.allow_train_idf:
+                raise ValueError("TfidfLR: idf must be fitted on C_unl (ТЗ 1.9): pass X_unl or call fit_idf; "
+                                 "allow_train_idf=True opts into the train-row fallback explicitly")
             warn_once("TfidfLR: no C_unl given, idf fitted on the train rows (ТЗ 1.9 asks for C_unl)")
             self.fit_idf(X_train)
             self.idf_source_ = "train"
         y = np.asarray(y_train).astype(int).ravel()
         Xt = self.transform(X_train)
         Xv = self.transform(X_val) if X_val is not None else None
-        self.C_, self.c_source_, self.c_table_ = select_c(lambda C: make_logreg(C, self.seed), Xt, y, Xv, y_val,
-                                                          self.C_grid, self.seed)
-        self.model_ = make_logreg(self.C_, self.seed).fit(Xt, y)
+        self.C_, self.c_source_, self.c_table_ = select_c(self._make_model, Xt, y, Xv, y_val, self.C_grid,
+                                                          self.seed, groups=groups)
+        self.model_ = self._make_model(self.C_).fit(Xt, y)
         return self
+
+    def _make_model(self, C: float):
+        return make_logreg(C, self.seed, self.cfg)
 
     def score(self, X: Any) -> np.ndarray:
         if self.model_ is None:
@@ -110,11 +131,12 @@ class KNN:
     Score for k >= 2: the mean label of the k nearest train windows (k + 1 distinct levels). For k = 1 the mean
     label is the neighbour's label, a 0/1 score whose ROC has a single point; to keep a ranking (design §6 asks
     for a monotone score) the k = 1 score is the label weighted by the similarity: ``0.5 + 0.5 * sim`` when the
-    nearest neighbour is an injection and ``0.5 - 0.5 * sim`` when it is benign. Positives whose nearest positive
-    neighbour is close rank highest, texts near a benign neighbour rank lowest, and undecided texts (low
-    similarity to anything) sit near 0.5; the hard 1-NN decision is recovered at the 0.5 threshold. Similarities
-    are computed in dense blocks (``common.cosine_similarity_blocks``); candidates come from ``argpartition`` and
-    are then ordered stably by (-similarity, index), so exact ties resolve to the lower train index.
+    nearest neighbour is an injection and ``0.5 - 0.5 * sim`` when it is benign (ASSUMPTIONS A15). Positives
+    whose nearest positive neighbour is close rank highest, texts near a benign neighbour rank lowest, and
+    undecided texts (low similarity to anything) sit near 0.5; the hard 1-NN decision is recovered at the 0.5
+    threshold. Similarities are computed in dense blocks (``common.cosine_similarity_blocks``); candidates come
+    from ``argpartition`` and are then ordered stably by (-similarity, index), so exact ties resolve to the lower
+    train index. ``fit`` ignores ``X_val``/``y_val``/``groups``: kNN has nothing to validate.
     """
 
     def __init__(self, k: int = 5, metric: str = "cosine", block_rows: int | None = None):
@@ -127,7 +149,7 @@ class KNN:
         self.Xt_: Any = None
         self.y_: np.ndarray | None = None
 
-    def fit(self, X_train: Any, y_train: Any, X_val: Any = None, y_val: Any = None) -> "KNN":
+    def fit(self, X_train: Any, y_train: Any, X_val: Any = None, y_val: Any = None, groups: Any = None) -> "KNN":
         self.Xt_ = l2_normalize_rows(X_train)
         self.y_ = np.asarray(y_train).astype(np.float64).ravel()
         if self.Xt_.shape[0] != self.y_.shape[0]:
@@ -178,7 +200,8 @@ class NearestCentroid:
         self.c0_: np.ndarray | None = None
         self.c1_: np.ndarray | None = None
 
-    def fit(self, X_train: Any, y_train: Any, X_val: Any = None, y_val: Any = None) -> "NearestCentroid":
+    def fit(self, X_train: Any, y_train: Any, X_val: Any = None, y_val: Any = None,
+            groups: Any = None) -> "NearestCentroid":
         Xn = l2_normalize_rows(X_train)
         y = np.asarray(y_train).astype(int).ravel()
         if not ((y == 0).any() and (y == 1).any()):
@@ -206,8 +229,9 @@ class LRSvd:
     """Logistic regression on the 51-dim standardised SVD features, no KC layer (ТЗ 3.1, the nose's ceiling).
 
     The features arrive standardised and permuted from ``nose.N51Svd`` (ТЗ 2.1), so nothing is rescaled here.
-    L2, balanced class weights, C by validation AUC from ``cfg.default['baselines']['lr_svd']['C_grid']``; the same
-    logistic regression as the MBON readout (ТЗ 2.4) so that H1b compares the input spaces, not the classifiers.
+    L2, balanced class weights, C by validation AUC from ``cfg.default['baselines']['lr_svd']['C_grid']``; the
+    estimator comes from ``common.make_logreg`` — the MBON readout's logistic regression (ТЗ 2.4, config
+    ``readout.linear``) — so that H1b compares the input spaces, not the classifiers.
     """
 
     name = "lr_svd"
@@ -215,6 +239,7 @@ class LRSvd:
     def __init__(self, C_grid: Sequence[float] | None = None, seed: int = 0, cfg: Configs | None = None):
         self.C_grid = [float(c) for c in C_grid] if C_grid is not None else _grid(cfg, "lr_svd")
         self.seed = int(seed)
+        self.cfg = cfg
         self.C_: float | None = None
         self.c_source_: str | None = None
         self.c_table_: dict[str, float | None] = {}
@@ -225,14 +250,18 @@ class LRSvd:
         X = as_matrix(X)
         return X.toarray() if sp.issparse(X) else X
 
-    def fit(self, X_train: Any, y_train: Any, X_val: Any = None, y_val: Any = None) -> "LRSvd":
+    def fit(self, X_train: Any, y_train: Any, X_val: Any = None, y_val: Any = None,
+            groups: Any = None) -> "LRSvd":
         Xt = self._dense(X_train)
         y = np.asarray(y_train).astype(int).ravel()
         Xv = self._dense(X_val) if X_val is not None else None
-        self.C_, self.c_source_, self.c_table_ = select_c(lambda C: make_logreg(C, self.seed), Xt, y, Xv, y_val,
-                                                          self.C_grid, self.seed)
-        self.model_ = make_logreg(self.C_, self.seed).fit(Xt, y)
+        self.C_, self.c_source_, self.c_table_ = select_c(self._make_model, Xt, y, Xv, y_val, self.C_grid,
+                                                          self.seed, groups=groups)
+        self.model_ = self._make_model(self.C_).fit(Xt, y)
         return self
+
+    def _make_model(self, C: float):
+        return make_logreg(C, self.seed, self.cfg)
 
     def score(self, X: Any) -> np.ndarray:
         if self.model_ is None:
@@ -247,11 +276,11 @@ def make_lexical_scorers(cfg: Configs, seed: int, X_unl: Any = None) -> dict[str
     the classifier (the baselines themselves have no other randomness).
     """
     b = cfg.default["baselines"]
-    scorers: dict[str, Any] = {"tfidf_lr": TfidfLR(b["tfidf"]["C_grid"], seed=seed, X_unl=X_unl)}
+    scorers: dict[str, Any] = {"tfidf_lr": TfidfLR(b["tfidf"]["C_grid"], seed=seed, X_unl=X_unl, cfg=cfg)}
     for k in b["knn"]["ks"]:
         knn = KNN(int(k), metric=b["knn"].get("metric", "cosine"))
         scorers[knn.name] = knn
     if b.get("centroid", True):
         scorers["centroid"] = NearestCentroid()
-    scorers["lr_svd"] = LRSvd(b["lr_svd"]["C_grid"], seed=seed)
+    scorers["lr_svd"] = LRSvd(b["lr_svd"]["C_grid"], seed=seed, cfg=cfg)
     return scorers

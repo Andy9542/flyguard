@@ -102,3 +102,30 @@ def test_empty_choices_and_missing_usage(transport):
     reply = transport(MSGS, "m", 0.0, **OPTS)
     assert reply.text is None and reply.usage == {} and reply.finish_reason is None
     assert len(netlog_lines(transport)) == 1
+
+
+def test_backoff_cap_from_config(tmp_path):
+    """paraphrase.transport.backoff_max_s caps every back-off sleep (jitter 0.5..1.5 of the capped value)."""
+    sleeps: list[float] = []
+    t = P.OpenAITransport("https://x.invalid/", "not-a-real-key", tmp_path / "network.log", sleep=sleeps.append,
+                          max_attempts=5, timeout=7.0, backoff_max=1.0)
+    t.client.chat.completions.create = lambda **kw: (_ for _ in ()).throw(status_error(openai.RateLimitError, 429))
+    with pytest.raises(P.TransportError):
+        t(MSGS, "m", 0.0, **OPTS)
+    assert len(sleeps) == 4 and all(0.5 <= s <= 1.5 for s in sleeps) and len(netlog_lines(t)) == 5
+    assert t.timeout == 7.0 and t.client.timeout == 7.0 and t.max_attempts == 5
+
+
+def test_make_transport_reads_the_frozen_transport_config(make_rt, T, monkeypatch):
+    """The three paraphrase.transport keys of configs/default.yaml govern the real transport (review: they were
+    dead config); the key comes from the provider's key_env and is never stored in the config."""
+    monkeypatch.setenv("FAKE_KEY_ENV", "not-a-real-key")
+    t = P.make_transport(make_rt())
+    assert (t.max_attempts, t.timeout, t.backoff_max) == (8, 600.0, 90.0) and t.client.timeout == 600.0
+    assert t.client.max_retries == 0 and t.base_url == "https://fake.invalid"
+    cfg = T.make_cfg(transport={"max_attempts": 2, "timeout_s": 5, "backoff_max_s": 1})
+    t2 = P.make_transport(make_rt(cfg=cfg))
+    assert (t2.max_attempts, t2.timeout, t2.backoff_max) == (2, 5.0, 1.0) and t2.client.timeout == 5.0
+    monkeypatch.delenv("FAKE_KEY_ENV")
+    with pytest.raises(SystemExit):
+        P.make_transport(make_rt())

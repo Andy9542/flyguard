@@ -89,6 +89,24 @@ def test_curveball_preserves_both_degree_sequences_and_changes(small_M):
     assert curveball_n_trades(small_M) >= small_M.nnz             # config swaps_per_edge >= 1
 
 
+def test_curveball_counts_attempted_trades_per_a14(small_M):
+    """ASSUMPTIONS A14: a chain is exactly n_trades *attempted* trades (Strona's count); no-ops are tallied."""
+    n_trades = curveball_n_trades(small_M, swaps_per_edge=5)
+    C, stats = curveball(small_M, n_trades, seed=11, return_stats=True)
+    assert stats["n_trades"] == n_trades and stats["n_attempted"] == n_trades
+    assert stats["n_effective"] + stats["n_subset_noop"] + stats["n_redraw_noop"] == n_trades
+    assert 0 < stats["n_effective"] <= n_trades and "capped" not in stats
+    assert (curveball(small_M, n_trades, seed=11) != C).nnz == 0            # stats do not perturb the chain
+    row0, col0 = degrees(small_M)
+    assert np.array_equal(degrees(C)[0], row0) and np.array_equal(degrees(C)[1], col0)
+    # a matrix on which no trade can change anything terminates after n_trades attempts, unchanged
+    nested = sp.csr_matrix(np.tril(np.ones((6, 6), dtype=np.float32)))
+    N, s = curveball(nested, 50, seed=0, return_stats=True)
+    assert (N != nested).nnz == 0 and s["n_attempted"] == 50 and s["n_effective"] == 0 and s["n_subset_noop"] == 50
+    Z, s0 = curveball(small_M, 0, seed=0, return_stats=True)
+    assert (Z != small_M).nnz == 0 and s0["n_attempted"] == 0
+
+
 def test_curveball_nulls_are_distinct_and_degree_preserving(small_M):
     nulls = curveball_nulls(small_M, n_null=5, seed=3)
     assert len(nulls) == 5

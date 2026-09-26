@@ -14,6 +14,7 @@ unlabelled corpus C_unl (ТЗ 1.9), never labels or test clusters.
 from __future__ import annotations
 
 import io
+import zipfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Sequence
@@ -80,25 +81,76 @@ def char_ngram_hash_counts(texts: Sequence[str], sizes: Sequence[int] | None = N
     return X
 
 
+def corpus_hash(texts: Sequence[str]) -> int:
+    """Identity of a text sequence for feature caches: one streaming xxhash64 over the UTF-8 texts, each prefixed
+    by its byte length so that ``["ab", "c"]`` and ``["a", "bc"]`` differ. Algorithm, seed and encoding are those
+    of ``windows.text_hash`` in the config (ASSUMPTIONS A17), not a literal. Order-sensitive on purpose: the cache
+    rows must line up with the caller's rows."""
+    th = load_configs().default["windows"]["text_hash"]
+    if str(th["algo"]).lower() != "xxhash64":
+        raise ValueError(f"windows.text_hash.algo must be xxhash64, got {th['algo']!r}")
+    encoding = str(th.get("encoding", "utf-8"))
+    h = xxhash.xxh64(seed=int(th["seed"]))
+    for text in texts:
+        b = str(text).encode(encoding)
+        h.update(len(b).to_bytes(8, "little"))
+        h.update(b)
+    return h.intdigest()
+
+
+_CACHE_KEYS = ("data", "indices", "indptr", "shape", "seed", "sizes", "bins", "n_texts", "texts_hash")
+
+
+def _load_cached_counts(path: Path, want: dict[str, Any]) -> sp.csr_matrix | None:
+    """The cached matrix when the file exists, is readable and its recorded identity equals ``want``; else None.
+    A file in the old ``scipy.sparse.save_npz`` layout (no identity keys) or a truncated archive is treated as a
+    miss, never as an error, and gets overwritten by the caller."""
+    if not path.exists():
+        return None
+    try:
+        with np.load(path, allow_pickle=False) as npz:
+            if any(key not in npz.files for key in _CACHE_KEYS):
+                return None
+            found = {"seed": int(npz["seed"]), "sizes": tuple(int(s) for s in npz["sizes"]), "bins": int(npz["bins"]),
+                     "n_texts": int(npz["n_texts"]), "texts_hash": int(npz["texts_hash"])}
+            if found != want:
+                return None
+            shape = tuple(int(s) for s in npz["shape"])
+            X = sp.csr_matrix((npz["data"].astype(np.float32), npz["indices"].astype(np.int32),
+                               npz["indptr"].astype(np.int64)), shape=shape)
+    except (OSError, ValueError, zipfile.BadZipFile):
+        return None
+    if X.shape != (want["n_texts"], want["bins"]):
+        return None
+    X.sort_indices()
+    return X
+
+
 def cached_char_ngram_hash_counts(texts: Sequence[str], path: str | Path, sizes: Sequence[int] | None = None,
                                   bins: int | None = None, seed: int = 0) -> sp.csr_matrix:
     """Counts of :func:`char_ngram_hash_counts` cached as an ``.npz`` file (design §5: counts are computed once
     per (seed, window set) and cached under ``data/processed/features/<seed>/``).
 
-    The caller chooses ``path`` so that it identifies the window set (e.g. a hash of the window ids); a cached
-    matrix is reused only when its row count matches ``len(texts)``. Written atomically through
-    :mod:`flyguard.io`.
+    The archive holds the csr arrays plus the identity of what they were computed from — ``seed``, ``sizes``,
+    ``bins``, ``n_texts`` and :func:`corpus_hash` of the texts — and is reused only when all five match the
+    request; a shape match alone would let a stale window set, another nose seed or other n-gram sizes leak
+    through a path collision. Any mismatch, an old-layout file or an unreadable archive recomputes and rewrites.
+    Written atomically through :mod:`flyguard.io`; only numeric arrays are stored, so loading never needs pickle.
     """
     path = Path(path)
-    want_bins = int(_nose_cfg()["n16k"]["bins"] if bins is None else bins)
-    if path.exists():
-        X = sp.load_npz(path).tocsr().astype(np.float32)
-        if X.shape == (len(texts), want_bins):  # a 51-bin and a 16k-bin cache of one window set must not alias
-            X.sort_indices()
-            return X
-    X = char_ngram_hash_counts(texts, sizes=sizes, bins=bins, seed=seed)
+    cfg = _nose_cfg()
+    want = {"seed": int(seed), "sizes": tuple(int(n) for n in (cfg["ngram_sizes"] if sizes is None else sizes)),
+            "bins": int(cfg["n16k"]["bins"] if bins is None else bins), "n_texts": len(texts),
+            "texts_hash": corpus_hash(texts)}
+    cached = _load_cached_counts(path, want)
+    if cached is not None:
+        return cached
+    X = char_ngram_hash_counts(texts, sizes=want["sizes"], bins=want["bins"], seed=want["seed"])
     buf = io.BytesIO()
-    sp.save_npz(buf, X, compressed=True)
+    np.savez_compressed(buf, data=X.data, indices=X.indices, indptr=X.indptr,
+                        shape=np.asarray(X.shape, dtype=np.int64), seed=np.int64(want["seed"]),
+                        sizes=np.asarray(want["sizes"], dtype=np.int64), bins=np.int64(want["bins"]),
+                        n_texts=np.int64(want["n_texts"]), texts_hash=np.uint64(want["texts_hash"]))
     atomic_write_bytes(path, buf.getvalue())
     return X
 

@@ -225,3 +225,62 @@ def test_contract_split_table():
     assert L.contract_split("user_task_0", "tool_knowledge", val_tasks={"user_task_0"}) == "val"
     assert L.contract_split("user_task_0", None, val_tasks={"user_task_0"}) == "val"
     assert L.contract_split("user_task_3", "injecagent", val_tasks={"user_task_0"}) == "train"
+
+
+# --------------------------------------------------------------------------------------------- fix pass
+
+def test_index_map_agrees_with_whole_string_nfkc_before_escaped_spans():
+    needle = "Toy needle: don't stop\nsecond line"
+    for prefix in ("Café menu: ", "가 ", "ொ x ", "ﬁne ㎢ ", "ạ́ ẹ́ "):
+        raw = prefix + S.yaml_render(needle, '"', width=30)
+        text = L.normalize_text(raw)
+        mapped, idx = L.normalize_with_map(raw)
+        assert mapped == text and len(idx) == len(text) and idx == sorted(idx)
+        report = L.injection_spans_report(raw, {"k": needle})
+        assert report.map_ok and report.mode == L.SPAN_YAML_ESCAPED and len(report.spans) == 1
+        a, b = report.spans[0]
+        assert _decoded_norm(text[a:b]) == L.normalize_text(needle)  # tight on both sides
+    assert L.injection_spans_detail("x", {"k": "y"}) == ([], None)
+
+
+def test_escaped_pass_is_skipped_not_clamped_on_map_disagreement(monkeypatch):
+    log, steps = _steps(S.log_ignored())
+    raw = steps[0].output_text
+    assert L.injection_spans_report(raw, log.injections).map_ok
+    real = L.normalize_with_map
+    monkeypatch.setattr(L, "normalize_with_map", lambda t: (real(t)[0] + "!", real(t)[1] + [0]))
+    report = L.injection_spans_report(raw, log.injections)
+    assert report == L.SpanReport([], None, False)
+    assert L.injection_spans_report("plain " + S.INJ_PLAIN, {"a": S.INJ_PLAIN}).map_ok  # exact pass never consults the map
+
+
+def test_pathological_arguments_do_not_abort_matching():
+    nested = "[" * 5000 + "]" * 5000
+    assert L.arg_items(nested) == [L.normalize_value(nested)]
+    deep: object = "x"
+    for _ in range(200):
+        deep = [deep]
+    assert len(L.arg_items(deep)) == 1 and L.arg_items({"k": deep})
+    ref = [{"function": "send_email", "key": {"recipients": ["a@b.c"]}}]
+    assert L.first_harmful_step([Step(0, "send_email", {"recipients": nested}, "")], ref) == (0, "name_only")
+
+
+def test_validation_tasks_per_benchmark_and_keyed_seed(cfg):
+    ids = [f"user_task_{i}" for i in (0, 3, 4, 6, 8, 9, 10, 11, 12, 13)]
+    rule = L.contract_rule(cfg)
+    assert L.validation_tasks("agentdyn", "shopping", ids, 5, rule) == set(ids)
+    dojo = L.validation_tasks("agentdojo", "workspace", ids, 5, rule)
+    assert len(dojo) == 2 and dojo == L.val_task_ids(ids, 5, 0.2, key="agentdojo/workspace")
+    assert L.val_task_ids(ids, 5, 0.2) == L.val_task_ids(ids, 5, 0.2, key=None)  # legacy stream unchanged
+    draws = {suite: frozenset(L.val_task_ids(ids, 5, 0.2, key=f"agentdojo/{suite}")) for suite in ("a", "b", "c", "d", "e")}
+    assert len(set(draws.values())) > 1
+    without = {k: v for k, v in rule.items() if k != "agentdyn_clean_non_test"}
+    assert len(L.validation_tasks("agentdyn", "shopping", ids, 5, without)) == 2
+    assert "all non-test" in L.validation_rule_text("agentdyn", rule) and "crc32" in L.validation_rule_text("agentdojo", rule)
+
+
+def test_target_args_come_from_config(cfg):
+    assert L.target_args_from_cfg(cfg) == tuple(cfg.default["extraction"]["harm_matching"]["target_args"])
+    assert L.meta_reference_calls(META, "injection_task_4", target_args=["url"]) == []
+    assert L.meta_reference_calls(META, "injection_task_4") == [{"function": "send_email", "key": {"recipients|cc|bcc": ["fallback@example.com"]}}]
+    assert L.reference_calls("agentdojo", "toy", "injection_task_4", REFS, META, target_args=["url"]) == ([], "meta")

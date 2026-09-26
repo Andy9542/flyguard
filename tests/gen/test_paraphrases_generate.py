@@ -70,24 +70,30 @@ def test_judge_json_outside_schema_counts_as_refusal():
 
 def test_budget_stop_with_fake_transport_and_spend_records(make_rt, T):
     """ТЗ 2.6 / "Бюджет API": every call is metered with the trace runner's record shape; generation stops when
-    the sum over results/spend/*.jsonl (all streams) reaches budget_usd, and a rerun resumes the missing calls."""
+    the sum over results/spend/*.jsonl (all streams) plus one call's headroom would exceed budget_usd (so the
+    total never ends above the budget), results/spend.json is refreshed, and a rerun resumes the missing calls."""
     rt = make_rt(budget=0.005)
     bases = P.deepset_bases(rt)
     out = P.generate_stage(rt, bases)
-    assert out["stopped"] and "budget" in out["stopped"] and out["ok"] == 3
+    assert out["stopped"] and "budget" in out["stopped"] and out["ok"] == 2      # 2 x 0.002; a third would exceed
     recs = read_jsonl(rt.paths.spend)
-    assert len(recs) == 3 == len(rt.transport.calls)
+    assert len(recs) == 2 == len(rt.transport.calls)
     for r in recs:
         assert SPEND_FIELDS <= set(r) and r["stream"] == "paraphrases" and r["role"] == "generator"
         assert r["peak"] is False and r["cost_usd"] == pytest.approx(T.COST_PER_CALL) and r["model"] == T.GEN
         assert r["cache_miss"] == 1000 and r["completion_tokens"] == 500 and r["base_id"].startswith("deep_")
-    assert P.spend_total(rt.paths.spend_dir) == pytest.approx(3 * T.COST_PER_CALL)
+    assert P.spend_total(rt.paths.spend_dir) == pytest.approx(2 * T.COST_PER_CALL)
+    assert P.spend_total(rt.paths.spend_dir) <= 0.005                            # the total never passes the budget
+    assert P.max_call_cost(rt.paths.spend, T.GEN) == pytest.approx(T.COST_PER_CALL) and P.max_call_cost(rt.paths.spend, "x") == 0.0
+    assert rt.spend_json_calls == [rt.cfg]                                       # refreshed once, on the stopped path too
     (rt.paths.spend_dir / "traces.jsonl").write_text(json.dumps({"cost_usd": 1.0, "stream": "traces"}) + "\n")
     rt2 = make_rt(budget=1.005, transport=T.FakeTransport())
-    assert P.generate_stage(rt2, bases)["stopped"] and rt2.transport.calls == []
+    assert P.generate_stage(rt2, bases)["stopped"] and rt2.transport.calls == []   # 1.004 + headroom 0.002 > 1.005
     rt3 = make_rt(budget=5.0, transport=T.FakeTransport())
     out3 = P.generate_stage(rt3, bases)
-    assert out3["stopped"] is None and len(rt3.transport.calls) == 8 - 3 and out3["skipped"] == 3
+    assert out3["stopped"] is None and len(rt3.transport.calls) == 8 - 2 and out3["skipped"] == 2
+    decisive = [(c["base_id"], c["generator"], c["call_index"]) for c in read_jsonl(rt.paths.calls)]
+    assert len(decisive) == 8 == len(set(decisive))                               # no call repeated across runs
 
 
 def test_generate_is_idempotent_and_counts_refusals(make_rt, T):
@@ -97,13 +103,16 @@ def test_generate_is_idempotent_and_counts_refusals(make_rt, T):
     assert out["ok"] == 4 and out["refusal"] == 4 and out["candidates"] == 16 and out["stopped"] is None
     calls = read_jsonl(rt.paths.calls)
     assert len(calls) == 8 and {c["refusal_reason"] for c in calls if c["status"] == "refusal"} == {"json_invalid"}
-    assert all(c["raw_sha256"] for c in calls) and all("text" not in c for c in calls)
+    assert all(c["raw_sha256"] for c in calls) and all("text" not in c for c in calls)   # raw reply: hash only
+    assert all(c["n_expected"] == 4 for c in calls) and all(c["candidates"] == [] for c in calls if c["status"] == "refusal")
+    assert all(c["n_candidates"] == len(c["candidates"]) == 4 for c in calls if c["status"] == "ok")
     rt2 = make_rt(transport=T.FakeTransport())
     out2 = P.generate_stage(rt2, bases)
     assert rt2.transport.calls == [] and out2["skipped"] == 8 and out2["processed"] == 0
-    cands = read_jsonl(rt.paths.candidates)
+    cands = [c for recs in P.load_candidates(rt).values() for c in recs]
     assert len(cands) == 16 and len({c["cand_id"] for c in cands}) == 16
     assert {c["declared_stratum"] for c in cands if c["kind"] == P.KIND_BEN} == {None}
+    assert {"cand_id", "base_id", "kind", "generator", "call_index", "k", "declared_stratum", "text", "ts"} <= set(cands[0])
 
 
 def test_api_error_is_retried_next_run_but_provider_error_is_a_refusal(make_rt, T):
@@ -143,7 +152,7 @@ def test_transport_receives_the_configured_options(make_rt, T):
     assert call["temperature"] == 0.9 and call["model"] == T.GEN
     assert call["options"]["response_format"] == {"type": "json_object"} and call["options"]["max_tokens"] == 512
     assert call["options"]["extra_body"] == {"thinking": {"type": "disabled"}}
-    cands = read_jsonl(rt.paths.candidates)
+    cands = P.load_candidates(rt)["deep_inj:0"]
     P.judge_candidate(rt, inj_base(T), cands[0], {})
     jcall = rt.transport.calls[-1]
     assert jcall["temperature"] == 0.0 and jcall["model"] == T.JUDGE
@@ -151,3 +160,23 @@ def test_transport_receives_the_configured_options(make_rt, T):
     assert rec["status"] == "ok" and rec["accept"] is True and rec["judge"] == T.JUDGE
     assert read_jsonl(rt.paths.spend)[-1]["role"] == "judge"
     assert not rt.paths.netlog.exists()                      # the fake transport never logs a request
+
+
+def test_truncated_reply_is_a_length_refusal_for_generator_and_judge(make_rt, T):
+    """Review: a reply cut by max_tokens (finish_reason "length") is its own refusal kind, not a JSON refusal,
+    so the refusal rates the ТЗ wants visible separate truncation from unparsable output."""
+    cut = P.Reply('{"paraphrases": [{"stratum": "deep", "text": "abc', dict(T.USAGE), finish_reason="length")
+    rt = make_rt(transport=T.FakeTransport(fail=lambda m, model, n: cut if n == 1 else None))
+    st = P.generate_base(rt, inj_base(T), [], {})
+    assert st == {"refusal": 1, "ok": 1, "candidates": 4}
+    calls = read_jsonl(rt.paths.calls)
+    assert calls[0]["status"] == "refusal" and calls[0]["refusal_reason"] == "length" and calls[0]["finish_reason"] == "length"
+    # even a parseable but truncated judge reply is a length refusal (the model did not finish)
+    whole = '{"same_action": true, "still_instruction": true, "confidence": 0.9}'
+    judge = lambda base, cand, model: {"raw": whole, "finish_reason": "length"}  # noqa: E731
+    rt2 = make_rt(transport=T.FakeTransport(judge=judge))
+    cand = P.load_candidates(rt2)["deep_inj:0"][0]
+    st2 = P.judge_candidate(rt2, inj_base(T), cand, {})
+    assert st2 == {"refusal": 1}
+    rec = read_jsonl(rt2.paths.judgements)[0]
+    assert rec["status"] == "refusal" and rec["refusal_reason"] == "length" and rec["accept"] is None

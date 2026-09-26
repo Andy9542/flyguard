@@ -163,6 +163,14 @@ class GuardModel:
     text, served from the parquet cache when the ``text_hash`` is known and appended otherwise. Batches of
     ``batch_size`` texts are sorted by length to reduce padding; ``torch.set_num_threads`` uses
     ``cfg.operator['compute']['cpu_cores']``.
+
+    Main runs score the common 256-character windows (ТЗ 1.3), each truncated by the tokenizer at ``max_length``
+    (a 256-character window is far below 512 tokens, so nothing is cut). E6 only (``score_long``) re-windows a
+    document with the model's own tokenizer: with the configured ``max_length`` 512 and the two special tokens
+    of these encoders, a token window holds 510 content tokens plus ``[CLS]``/``[SEP]`` (510 + 2), the stride is
+    ``round(510 * 192/256) = round(382.5) = 382`` tokens (Python rounds the half to even; overlap 128 tokens),
+    starts are ``0, 382, 764, ...`` plus a last window ending on the final token, and the document score is the
+    max over its token windows (ТЗ 1.3 document rule). Token windows go through the same hash cache as any text.
     """
 
     def __init__(self, name: str, cfg: Configs, loader: Callable[["GuardModel"], tuple[Any, Any]] | None = None,
@@ -218,8 +226,9 @@ class GuardModel:
                 "cache": str(self.cache.path) if self.cache else None}
 
     # -- protocol -----------------------------------------------------------------------------------------------
-    def fit(self, X_train: Any = None, y_train: Any = None, X_val: Any = None, y_val: Any = None) -> "GuardModel":
-        """No training: ТЗ 3.2 evaluates the released checkpoints as they are."""
+    def fit(self, X_train: Any = None, y_train: Any = None, X_val: Any = None, y_val: Any = None,
+            groups: Any = None) -> "GuardModel":
+        """No training: ТЗ 3.2 evaluates the released checkpoints as they are (``groups`` accepted, unused)."""
         return self
 
     def load(self) -> "GuardModel":
@@ -269,11 +278,23 @@ class GuardModel:
         return clip01([known[k] for k in keys])
 
     def score_long(self, X: Sequence[str]) -> np.ndarray:
-        """E6 helper: max over the model's 512-token windows of each text (document rule of ТЗ 1.3)."""
-        out = []
-        for t in X:
-            wins = [w for _, _, w in self.token_windows(str(t))]
-            out.append(float(self.score(wins).max()) if wins else 0.0)
+        """E6 helper: max over the model's 512-token windows of each text (document rule of ТЗ 1.3).
+
+        The token windows of *all* documents are collected first and scored in one ``score`` call, so the cache
+        is read and appended once per call and the batches are filled across documents; the per-document max is
+        then taken with ``np.maximum.at``. A document without windows (never produced by ``token_windows``, which
+        always returns at least one) would score 0.
+        """
+        texts = [str(t) for t in X]
+        windows: list[str] = []
+        owner: list[int] = []
+        for i, t in enumerate(texts):
+            for _, _, w in self.token_windows(t):
+                windows.append(w)
+                owner.append(i)
+        out = np.zeros(len(texts), dtype=np.float64)
+        if windows:
+            np.maximum.at(out, np.asarray(owner, dtype=np.int64), self.score(windows))
         return clip01(out)
 
     # -- inference ----------------------------------------------------------------------------------------------

@@ -3,6 +3,11 @@
 Both consume a binary csr code ``Z [n, m]`` (from :func:`flyguard.fly.fly_code` or ``sign_code``) and return a
 score in [0, 1] per row. Hyperparameters (gamma, C) are chosen by validation AUC only (ТЗ "Честность
 эксперимента"); the grids live in ``configs/default.yaml`` (``readout.bloom.gammas``, ``readout.linear.C_grid``).
+
+:func:`make_logistic` is the *one* logistic regression of the project: the MBON readout, ``LRSvd`` (the nose's
+ceiling, ТЗ 3.1) and ``TfidfLR`` must all build their estimator here, so that H1b compares input spaces and not
+two differently configured solvers. Its settings (solver, iterations, tolerance, class weights, penalty) come
+from ``configs/default.yaml`` ``readout.linear`` and nowhere else.
 """
 from __future__ import annotations
 
@@ -14,12 +19,46 @@ import scipy.sparse as sp
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 
-from flyguard.config import load_configs
+from flyguard.config import Configs, load_configs
 
 
 @lru_cache(maxsize=1)
-def _readout_cfg() -> dict[str, Any]:
-    return load_configs().default["readout"]
+def _default_configs() -> Configs:
+    return load_configs()
+
+
+def _readout_cfg(cfg: Configs | None = None) -> dict[str, Any]:
+    return (cfg or _default_configs()).default["readout"]
+
+
+_PENALTY_TO_L1_RATIO = {"l2": 0.0, "l1": 1.0}
+
+
+def make_logistic(C: float, seed: int, cfg: Configs | None = None) -> LogisticRegression:
+    """The single logistic-regression factory (ТЗ 2.4 "Линейный (MBON)", ТЗ 3.1 TF-IDF + LR and LR on N51-svd).
+
+    Every setting is read from ``readout.linear`` of ``configs/default.yaml``: ``solver``, ``max_iter``, ``tol``,
+    ``class_weight`` (``balanced``: deepset train is 343/203 and E2 subsamples are skewed further) and
+    ``penalty``. Only ``C`` (validated per detector) and the seed vary between callers, so the MBON readout and
+    the baselines it is paired with (H1b) fit the same estimator. scikit-learn >= 1.8 deprecates ``penalty`` in
+    favour of ``l1_ratio`` (``l2`` -> 0.0, ``l1`` -> 1.0, no penalty -> ``C = inf``), so the config value is
+    translated here and ``penalty`` itself is never passed (no FutureWarning). ``random_state`` is set even for
+    the deterministic lbfgs so a config switch to ``saga``/``liblinear`` stays reproducible.
+    """
+    lin = _readout_cfg(cfg)["linear"]
+    C = float(C)
+    penalty = lin["penalty"]
+    key = "none" if penalty is None else str(penalty).lower()
+    if key == "none":
+        l1_ratio, C = 0.0, np.inf
+    elif key in _PENALTY_TO_L1_RATIO:
+        l1_ratio = _PENALTY_TO_L1_RATIO[key]
+    else:
+        raise ValueError(f"readout.linear.penalty must be l2, l1 or none, got {penalty!r}")
+    if not C > 0:
+        raise ValueError(f"C must be positive, got {C}")
+    return LogisticRegression(C=C, l1_ratio=l1_ratio, class_weight=lin["class_weight"], solver=str(lin["solver"]),
+                              max_iter=int(lin["max_iter"]), tol=float(lin["tol"]), random_state=int(seed))
 
 
 def _as_code(Z: sp.spmatrix | np.ndarray) -> sp.csr_matrix:
@@ -152,30 +191,26 @@ class LinearReadout:
     """Linear MBON readout (ТЗ 2.4 "Линейный (MBON)"): logistic regression on z with L2, balanced class weights,
     C chosen on validation; the score is the sigmoid (``predict_proba[:, 1]``).
 
-    liblinear handles the sparse binary codes at FlyHash width directly and is deterministic for the primal L2
-    problem. sklearn >= 1.8 deprecates ``penalty``; ``l1_ratio=0.0`` is the L2 penalty. Balanced class weights
-    (``readout.linear.class_weight``) replace subsampling here because the linear model can reweight.
+    The estimator comes from :func:`make_logistic` and nothing else: solver, iterations, tolerance, penalty and
+    class weights are the ``readout.linear`` config values shared with the baselines, so there is no knob here
+    that could make the MBON readout and its H1b pair (``LRSvd``) differ in anything but the input space.
+    Balanced class weights replace subsampling because the linear model can reweight. lbfgs (the configured
+    solver) takes the sparse binary codes at FlyHash width directly.
     """
 
-    def __init__(self, C: float = 1.0, seed: int = 0, max_iter: int = 1000, tol: float = 1e-4,
-                 solver: str = "liblinear", class_weight: str | dict | None = None) -> None:
-        cfg = _readout_cfg()["linear"]
+    def __init__(self, C: float = 1.0, seed: int = 0, cfg: Configs | None = None) -> None:
         self.C = float(C)
         self.seed = int(seed)
-        self.max_iter = int(max_iter)
-        self.tol = float(tol)
-        self.solver = solver
-        self.class_weight = cfg.get("class_weight", "balanced") if class_weight is None else class_weight
+        self.cfg = cfg
         self.model_: LogisticRegression | None = None
 
     def fit(self, Z: sp.spmatrix | np.ndarray, y: Sequence[int] | np.ndarray) -> "LinearReadout":
-        """Fit the L2 logistic regression; needs both classes."""
+        """Fit the configured logistic regression; needs both classes."""
         Zc = _as_code(Z)
         yc = _labels(y, Zc.shape[0])
         if np.unique(yc).size < 2:
             raise ValueError("LinearReadout.fit needs examples of both classes")
-        self.model_ = LogisticRegression(C=self.C, l1_ratio=0.0, class_weight=self.class_weight, solver=self.solver,
-                                         random_state=self.seed, max_iter=self.max_iter, tol=self.tol)
+        self.model_ = make_logistic(self.C, self.seed, self.cfg)
         self.model_.fit(Zc, yc)
         return self
 
@@ -200,11 +235,11 @@ def _first_argmax(table: dict[Any, float]) -> Any:
 
 def select_gamma(Z_train: sp.spmatrix, y_train: np.ndarray, Z_val: sp.spmatrix, y_val: np.ndarray, m: int, k: int,
                  seed_subsample: int = 0, gammas: Sequence[float] | None = None,
-                 normalized: bool = False) -> tuple[float, dict[float, float]]:
+                 normalized: bool = False, cfg: Configs | None = None) -> tuple[float, dict[float, float]]:
     """Choose gamma for the Bloom readout by validation AUC only (ТЗ 2.4 "gamma по валидации"; grid
     ``readout.bloom.gammas``). Returns ``(best_gamma, {gamma: val_auc})``; ties go to the first grid entry. Called
     separately for few-shot and full training, as the ТЗ requires."""
-    grid = [float(g) for g in (_readout_cfg()["bloom"]["gammas"] if gammas is None else gammas)]
+    grid = [float(g) for g in (_readout_cfg(cfg)["bloom"]["gammas"] if gammas is None else gammas)]
     y_val = np.asarray(y_val)
     table: dict[float, float] = {}
     for g in grid:
@@ -214,13 +249,15 @@ def select_gamma(Z_train: sp.spmatrix, y_train: np.ndarray, Z_val: sp.spmatrix, 
 
 
 def select_C(Z_train: sp.spmatrix, y_train: np.ndarray, Z_val: sp.spmatrix, y_val: np.ndarray,
-             C_grid: Sequence[float] | None = None, seed: int = 0, **linear_kwargs: Any) -> tuple[float, dict[float, float]]:
+             C_grid: Sequence[float] | None = None, seed: int = 0,
+             cfg: Configs | None = None) -> tuple[float, dict[float, float]]:
     """Choose C for the linear readout by validation AUC only (ТЗ 2.4 "C по валидации"; grid
-    ``readout.linear.C_grid``). Returns ``(best_C, {C: val_auc})``; ties go to the first grid entry."""
-    grid = [float(c) for c in (_readout_cfg()["linear"]["C_grid"] if C_grid is None else C_grid)]
+    ``readout.linear.C_grid``). Returns ``(best_C, {C: val_auc})``; ties go to the first grid entry. Every
+    candidate is a :func:`make_logistic` estimator, so the search varies C and nothing else."""
+    grid = [float(c) for c in (_readout_cfg(cfg)["linear"]["C_grid"] if C_grid is None else C_grid)]
     y_val = np.asarray(y_val)
     table: dict[float, float] = {}
     for c in grid:
-        model = LinearReadout(C=c, seed=seed, **linear_kwargs).fit(Z_train, y_train)
+        model = LinearReadout(C=c, seed=seed, cfg=cfg).fit(Z_train, y_train)
         table[c] = float(roc_auc_score(y_val, model.score(Z_val)))
     return _first_argmax(table), table

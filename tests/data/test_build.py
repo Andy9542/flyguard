@@ -35,13 +35,27 @@ def test_build_without_traces_end_to_end(cfg, raw_root, recorder):
     assert "deep:test:1" not in res["splits"]["e1"]["test"]["deep"]
     # manifests
     processed, manifests = build.output_dirs(raw_root, False)
-    for name in ("splits.json", "pools.json", "dedup.json", "audit.md"):
+    for name in ("splits.json", "pools.json", "dedup.json", "audit.md", "contamination.json"):
         assert (manifests / name).exists()
     assert (processed / "documents.parquet").exists() and (processed / "windows.parquet").exists()
     assert not (processed / "episodes.parquet").exists()
     audit = (manifests / "audit.md").read_text(encoding="utf-8")
     assert "deepset" in audit and "NotInject" in audit and "qa" in audit and "--without-traces" in audit
     assert "Ignore all previous" not in audit                      # counts only, never texts
+    assert "ТЗ 3.2" in audit and "prompt-injections" in audit
+    # contamination (ТЗ 3.2): the two deepset train copies and the test copy are found, the journal names the file
+    c = json.load(open(manifests / "contamination.json"))
+    assert c["skipped"] is False and c["piguard_train"]["records"] == 25 and c["piguard_train"]["empty_texts"] == 1
+    # deep:train:0, deep:train:2 and its exact test copy deep:test:1 (tag prompt-injections), deep:test:4 (TaskTracker)
+    assert c["document_level"]["deep"]["total"]["documents_matched"] == 4
+    assert c["document_level"]["deep"]["test"]["0"]["documents_matched"] == 2
+    assert c["document_level_by_piguard_source"]["deep"] == {"TaskTracker": 1, "prompt-injections": 3}
+    assert c["window_level"]["deep"]["total"]["windows_matched"] >= 4
+    assert c["document_level"].get("notinject", {}).get("total", {}).get("documents_matched", 0) == 0
+    assert c["targeted_containment"]["bipia"]["ours_in_piguard"] >= 1         # wrapped context found by containment
+    assert c["targeted_containment"]["dojo"]["note"] == "nothing to compare"
+    assert [r for r in recorder.calls if r[1] == "external"] and "piguard_train" in [r for r in recorder.calls if r[1] == "external"][0][0]
+    assert "Ignore all previous" not in json.dumps(c, ensure_ascii=False) and "Summarize the e-mail" not in json.dumps(c)
     sp = json.load(open(manifests / "splits.json"))
     assert set(sp["e1"]["test"]) == {"deep", "bipia", "notinject"} and sp["e3"]["cross_template"] == []
     assert sp["counts"]["c_unl"] == len(sp["c_unl"]) > 0
@@ -67,7 +81,7 @@ def test_build_without_traces_end_to_end(cfg, raw_root, recorder):
 def test_build_is_idempotent(cfg, raw_root, recorder):
     processed, manifests = build.output_dirs(raw_root, False)
     build.build_all(cfg, without_traces=True, root=raw_root, access_log=recorder)
-    first = {n: (manifests / n).read_bytes() for n in ("splits.json", "pools.json", "dedup.json", "audit.md")}
+    first = {n: (manifests / n).read_bytes() for n in ("splits.json", "pools.json", "dedup.json", "audit.md", "contamination.json")}
     d1, w1 = build.read_documents(processed / "documents.parquet"), build.read_windows(processed / "windows.parquet")
     build.build_all(cfg, without_traces=True, root=raw_root, access_log=recorder)
     for n, data in first.items():
@@ -91,17 +105,29 @@ def test_smoke_subset_respects_caps_and_clusters(cfg, raw_root, recorder, monkey
     docs = res["documents"]
     processed, manifests = build.output_dirs(raw_root, True)
     assert processed.name == "smoke" and manifests.name == "smoke" and (manifests / "splits.json").exists()
+    full = build.build_all(cfg, without_traces=True, smoke=False, root=raw_root, access_log=recorder, write=False)
+    fdocs = full["documents"]
+    strata = lambda d: d["split"] + "/" + d["meta"].map(lambda m: m.get("task", ""))      # noqa: E731
     for src, g in docs.groupby("source"):
         max_cluster = g.groupby("cluster_id").size().max()
-        assert len(g) <= 8 + max_cluster
+        n_strata = strata(fdocs[fdocs.source == src]).nunique()
+        assert len(g) <= 8 + n_strata * max_cluster                # one whole unit may overshoot per stratum
+        assert set(strata(g)) == set(strata(fdocs[fdocs.source == src]))   # every split (and BIPIA task) present
     bip = docs[docs.source == "bipia"]
     for _, g in bip.groupby(bip.doc_id.map(bipia_context_key)):
         assert set(g.label) == {0, 1}                              # whole contexts only
     assert set(bip.split) == {"val", "test"}                       # smoke keeps material of every split
     assert set(docs[docs.source == "deep"].split) == {"train", "val", "test"}
-    full = build.build_all(cfg, without_traces=True, smoke=False, root=raw_root, access_log=recorder, write=False)
+    deep, fdeep = docs[docs.source == "deep"], fdocs[fdocs.source == "deep"]
+    for split in ("train", "val", "test"):                        # proportional to the full shares, sorted head
+        share = (fdeep.split == split).mean()
+        assert abs((deep.split == split).sum() - round(8 * share)) <= 1
+        assert list(deep[deep.split == split].doc_id) == sorted(fdeep[fdeep.split == split].doc_id)[: (deep.split == split).sum()]
     sub = docs.set_index("doc_id")["split"]
-    assert (full["documents"].set_index("doc_id").loc[sub.index, "split"] == sub).all()   # same split as the full build
+    assert (fdocs.set_index("doc_id").loc[sub.index, "split"] == sub).all()   # same split as the full build
+    sp = json.load(open(manifests / "splits.json"))
+    assert sp["smoke"]["rule"] == build.SMOKE_RULE and sp["smoke"]["caps"]["docs_per_source"] == 8
+    assert (manifests / "contamination.json").exists()
 
 
 def test_cli_parses_flags(monkeypatch):
@@ -110,10 +136,15 @@ def test_cli_parses_flags(monkeypatch):
     def fake(cfg, without_traces=False, smoke=False):
         calls.update(without_traces=without_traces, smoke=smoke)
         import pandas as pd
-        return {"documents": pd.DataFrame({"source": ["deep"]}), "windows": pd.DataFrame(),
-                "dedup": {"documents_dropped_total": 0, "test_windows_excluded": 0}, "notes": ["n"]}
+        return {"documents": pd.DataFrame({"source": ["deep"], "split": ["test"], "label": [1], "text": ["secret text"]}),
+                "windows": pd.DataFrame({"source": ["deep"], "split": ["test"], "text": ["secret text"]}),
+                "dedup": {"documents_dropped_total": 0, "test_windows_excluded": 0}, "notes": ["n"],
+                "pools": {"p_val": {"n": 0}}, "contamination": {"skipped": True, "note": "missing"}}
 
     monkeypatch.setattr(build, "build_all", fake)
     monkeypatch.setattr(build, "load_configs", lambda: object())
     assert build.main(["--without-traces", "--smoke"]) == 0
     assert calls == {"without_traces": True, "smoke": True}
+    lines = build.summary_lines(fake(None))
+    assert any("deep/test: documents=1 (pos=1, neg=0) windows=1" in ln for ln in lines)
+    assert "secret text" not in "\n".join(lines)                   # counts only

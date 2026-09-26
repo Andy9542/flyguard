@@ -100,3 +100,21 @@ def test_build_windows_uses_config_and_carries_document_fields(cfg):
     assert w[w.doc_id == "c"].iloc[0]["text"] == "short"
     assert not w["dedup_excluded"].any() and w["dup_of"].isna().all()
     assert (w["cluster_id"] == w["doc_id"].map({"a": "a", "b": "c", "c": "c"})).all()
+
+
+def test_text_hash_reads_config_and_refuses_unknown_algo(cfg, monkeypatch):
+    """windows.text_hash {algo, seed, encoding} is the single definition of the cache key (ASSUMPTIONS A17)."""
+    from flyguard.data.windows import text_hash_from_cfg
+
+    spec = cfg.default["windows"]["text_hash"]
+    h = text_hash_from_cfg(cfg)
+    assert h("héllo") == xxhash.xxh64("héllo".encode(spec["encoding"]), seed=int(spec["seed"])).hexdigest()
+    assert h("héllo") == text_hash("héllo")                       # cfg-less callers get the same key
+    assert text_hash("x", seed=1) != text_hash("x")
+    w = build_windows(pd.DataFrame([{"doc_id": "a", "source": "deep", "split": "train", "label": 0,
+                                     "text": "some text", "spans": [], "cluster_id": "a"}]), cfg)
+    assert w.iloc[0]["text_hash"] == h("some text")
+    monkeypatch.setitem(cfg.default, "windows", dict(cfg.default["windows"], text_hash={"algo": "md5", "seed": 0}))
+    import pytest
+    with pytest.raises(ValueError):
+        text_hash_from_cfg(cfg)

@@ -5,6 +5,13 @@ Every function takes a dict of numbers / CI dicts (as stored in ``results/*.json
 ``опровергнута`` (data suffice by E0 and the conditions fail), ``не хватило данных`` (E0 says the source cannot
 carry the metric, or an input the rule needs is missing), ``предусловие не выполнено`` (H2/H3 validation gate).
 Nothing here reads data files; the experiments layer assembles the inputs and the report prints the outputs.
+
+The E0 gate is not optional: H1a, H1b and H3 need to know whether a source (or macroAUC) carries the AUC difference,
+either from the E0 table passed as ``power`` (``results/power.json`` -> :func:`carriers_from_power`) or from an
+explicit ``carrier`` flag in the row. A row with data but no known carrier status raises ``ValueError`` instead of
+defaulting to "carries", so forgetting to wire E0 cannot produce a confirmed hypothesis. A source that carries (or
+whose status is unknown) but lacks the interval the rule needs is a missing input -> "не хватило данных"; only a
+source E0 marks as not carrying may be skipped.
 """
 from __future__ import annotations
 
@@ -58,6 +65,10 @@ def _fmt(x: float | None) -> str:
     return "—" if x is None or not math.isfinite(x) else f"{x:+.4f}"
 
 
+def _fmt_p(p: float | None) -> str:
+    return "—" if p is None or not math.isfinite(float(p)) else f"{float(p):.3g}"
+
+
 def carriers_from_power(power: Mapping[str, Any], metric: str = "auc_diff") -> dict[str, bool]:
     """Read the E0 table (``power_table``) into ``{source: carries}`` for one metric (default: the AUC difference)."""
     from flyguard.eval.power import CARRIES
@@ -65,21 +76,46 @@ def carriers_from_power(power: Mapping[str, Any], metric: str = "auc_diff") -> d
     return {s: (row.get(metric) == CARRIES) for s, row in (power.get("carriers") or {}).items()}
 
 
+def _carrier_flag(row: Mapping[str, Any] | None, source: str, power: Mapping[str, Any] | None,
+                  metric: str = "auc_diff") -> tuple[bool | None, str]:
+    """E0 carrier status of ``source`` and its Russian label for ``inputs``: from the E0 table when ``power`` is
+    given (a source absent from the table did not go through E0, so it does not carry), else from the row's own
+    ``carrier`` flag; ``None`` when neither is available (the caller decides: missing data -> "не хватило данных",
+    complete data -> ``ValueError``, never a silent default)."""
+    if power is not None:
+        table = carriers_from_power(power, metric)
+        if source not in table:
+            return False, "нет в таблице E0"
+        return bool(table[source]), ("несёт по E0" if table[source] else "не несёт по E0")
+    if row and "carrier" in row and row["carrier"] is not None:
+        return bool(row["carrier"]), ("несёт по E0" if row["carrier"] else "не несёт по E0")
+    return None, "статус E0 неизвестен"
+
+
+def _unknown_carrier(hypothesis: str, what: str) -> ValueError:
+    return ValueError(f"{hypothesis}: E0 carrier status of {what} is unknown; pass power=<results/power.json table> "
+                      f"or an explicit 'carrier' flag in the row (the E0 gate is mandatory)")
+
+
 # ----------------------------------------------------------------------------------------------------------------
 # H1a
 # ----------------------------------------------------------------------------------------------------------------
-def verdict_h1a(results: Mapping[str, Any], cfg: Configs | None = None) -> Verdict:
+def verdict_h1a(results: Mapping[str, Any], cfg: Configs | None = None,
+                power: Mapping[str, Any] | None = None) -> Verdict:
     """H1a (ТЗ Этап 4). Template half: on each of {deep, dojo} that carries the AUC difference by E0, the 90 % CI of
     AUC(TF-IDF) − AUC(ProtectAI v2) lies inside ±δ, δ = delta_rel × AUC(ProtectAI v2). Semantic half: on each present
     source of {para (deep stratum), bipia, dyn} the lower bound of the 95 % CI of AUC(ProtectAI v2) − AUC(TF-IDF) is
     above zero, with Holm over the sources. Confirmed when both halves hold.
 
-    ``results = {"template": {src: {"diff_ci90", "reference", "carrier"}}, "semantic": {src: {"diff_ci95", "p"}},
-    "delta_rel"?, "alpha"?}``. ``p`` is the two-sided percentile-bootstrap p-value of the difference (from the same
-    draws as the CI); when absent it is approximated from the CI (flagged). Holm is applied to these p-values and a
-    source passes when its adjusted p <= α *and* its 95 % lower bound is above zero (the literal wording keeps the
-    interval condition; Holm adds the family-wise control). No carrying template source or no present semantic
-    source -> "не хватило данных".
+    ``results = {"template": {src: {"diff_ci90", "reference", "carrier"?}}, "semantic": {src: {"diff_ci95", "p"}},
+    "delta_rel"?, "alpha"?}``; ``power`` is the E0 table (``results/power.json``), which supersedes the per-row
+    ``carrier`` flags (module docstring: one of the two is mandatory). ``p`` is the two-sided percentile-bootstrap
+    p-value of the difference (from the same draws as the CI); when absent it is approximated from the CI (flagged).
+    Holm is applied to these p-values and a source passes when its adjusted p <= α *and* its 95 % lower bound is
+    above zero (the literal wording keeps the interval condition; Holm adds the family-wise control).
+    "Не хватило данных" when a carrying template source has no interval / reference (the rule needs it on *each*
+    carrier), when no template source carries, when a present semantic source has no finite p, or when no semantic
+    source is present.
     """
     st = _cfg_stats(cfg)
     delta_rel = float(results.get("delta_rel", st["tost"]["delta_rel"]))
@@ -91,24 +127,32 @@ def verdict_h1a(results: Mapping[str, Any], cfg: Configs | None = None) -> Verdi
     cis: dict[str, Any] = {"template": {}, "semantic": {}}
 
     carriers = []
+    missing: list[str] = []
     for s in ("deep", "dojo"):
-        row = template.get(s)
-        if not row:
-            inputs["template"][s] = {"status": "нет данных"}
+        row = template.get(s) or {}
+        carrier, why = _carrier_flag(row, s, power)
+        if carrier is False:
+            inputs["template"][s] = {"status": why, "carrier": False}
             continue
         ci = _ci(row.get("diff_ci90"))
-        if not row.get("carrier", True) or ci is None or row.get("reference") is None:
-            inputs["template"][s] = {"status": "не несёт по E0" if not row.get("carrier", True) else "нет ДИ"}
+        ref = row.get("reference")
+        if ci is None or ref is None:
+            inputs["template"][s] = {"status": "нет данных" if not row else "нет ДИ", "carrier": carrier,
+                                     "e0": why}
+            missing.append(s)
             continue
-        delta = equivalence_margin(float(row["reference"]), delta_rel)
+        if carrier is None:
+            raise _unknown_carrier("H1a", f"template source {s!r}")
+        delta = equivalence_margin(float(ref), delta_rel)
         t = tost(ci, delta)
-        inputs["template"][s] = {**t, "reference": float(row["reference"]), "carrier": True}
+        inputs["template"][s] = {**t, "reference": float(ref), "carrier": True, "e0": why}
         effect["template"][s], cis["template"][s] = ci.point, ci.to_dict()
         carriers.append((s, t["equivalent"]))
 
     present = []
     pvals: dict[str, float] = {}
     approx: list[str] = []
+    no_p: list[str] = []
     for s in ("para", "bipia", "dyn"):
         row = semantic.get(s)
         ci = _ci(row.get("diff_ci95")) if row else None
@@ -119,9 +163,15 @@ def verdict_h1a(results: Mapping[str, Any], cfg: Configs | None = None) -> Verdi
         if p is None:
             p = p_from_ci(ci)
             approx.append(s)
-        pvals[s] = float(p)
-        present.append((s, ci))
+        p = float(p)
         effect["semantic"][s], cis["semantic"][s] = ci.point, ci.to_dict()
+        if not math.isfinite(p):
+            inputs["semantic"][s] = {"status": "нет p", "point": ci.point, "low": ci.low, "high": ci.high,
+                                     "p_approximate": s in approx}
+            no_p.append(s)
+            continue
+        pvals[s] = p
+        present.append((s, ci))
     adj = holm(pvals)
     semantic_ok = True
     for s, ci in present:
@@ -130,9 +180,15 @@ def verdict_h1a(results: Mapping[str, Any], cfg: Configs | None = None) -> Verdi
                                  "p_holm": adj.get(s), "passes": bool(ok), "p_approximate": s in approx}
         semantic_ok &= bool(ok)
 
+    if missing:
+        return Verdict(INSUFFICIENT, effect, cis, "нет ДИ разности для несущего по E0 шаблонного источника: "
+                       + ", ".join(missing), inputs, "H1a")
     if not carriers:
         return Verdict(INSUFFICIENT, effect, cis, "ни один шаблонный источник {deep, dojo} не несёт разность AUC по "
-                       "таблице мощности E0 (или нет ДИ)", inputs, "H1a")
+                       "таблице мощности E0", inputs, "H1a")
+    if no_p:
+        return Verdict(INSUFFICIENT, effect, cis, "нет конечного p-значения для семантического источника: "
+                       + ", ".join(no_p) + " (ДИ вырожден или p не передан)", inputs, "H1a")
     if not present:
         return Verdict(INSUFFICIENT, effect, cis, "нет ни одного семантического источника {para, bipia, dyn} с ДИ "
                        "разности", inputs, "H1a")
@@ -141,7 +197,7 @@ def verdict_h1a(results: Mapping[str, Any], cfg: Configs | None = None) -> Verdi
                       f"[{cis['template'][s]['low']:+.4f}, {cis['template'][s]['high']:+.4f}], δ="
                       f"{inputs['template'][s]['delta']:.4f})" for s, eq in carriers)
     s_txt = ", ".join(f"{s}: {'выше нуля' if inputs['semantic'][s]['passes'] else 'не выше нуля'} (95% ДИ "
-                      f"[{ci.low:+.4f}, {ci.high:+.4f}], p_Holm={inputs['semantic'][s]['p_holm']:.3g})"
+                      f"[{ci.low:+.4f}, {ci.high:+.4f}], p_Holm={_fmt_p(inputs['semantic'][s]['p_holm'])})"
                       for s, ci in present)
     reason = f"шаблонная половина: {t_txt}; семантическая половина: {s_txt}"
     if approx:
@@ -153,7 +209,8 @@ def verdict_h1a(results: Mapping[str, Any], cfg: Configs | None = None) -> Verdi
 # ----------------------------------------------------------------------------------------------------------------
 # H1b
 # ----------------------------------------------------------------------------------------------------------------
-def verdict_h1b(results: Mapping[str, Any], variant: str = "real_fly", cfg: Configs | None = None) -> Verdict:
+def verdict_h1b(results: Mapping[str, Any], variant: str = "real_fly", cfg: Configs | None = None,
+                power: Mapping[str, Any] | None = None) -> Verdict:
     """H1b (ТЗ Этап 4) for one fly variant (``real_fly`` or ``flyhash``; the ТЗ reads them separately).
     (i) the 90 % CI of macroAUC(fly, linear readout) − macroAUC(reference) lies inside ±δ, δ = delta_rel × the
     reference macroAUC (LR on N51-svd for the real fly, TF-IDF on N16k for FlyHash); (ii) at 1 and 10 examples per
@@ -161,27 +218,32 @@ def verdict_h1b(results: Mapping[str, Any], variant: str = "real_fly", cfg: Conf
     the 95 % CI of macroAUC(Bloom fly) − macroAUC(TF-IDF) lies below zero. Confirmed when (i) and all of (ii) hold.
 
     ``results[variant] = {"equiv": {"diff_ci90", "reference", "carrier"?}, "fewshot": {"1": {"diff_ci95"},
-    "10": {"diff_ci95"}}, "full": {"diff_ci95"}}``; a missing interval -> "не хватило данных".
+    "10": {"diff_ci95"}}, "full": {"diff_ci95"}}``; ``power`` (the E0 table, row ``macro``) supersedes the
+    ``carrier`` flag of ``equiv``. A missing interval -> "не хватило данных".
     """
     st = _cfg_stats(cfg)
     delta_rel = float(results.get("delta_rel", st["tost"]["delta_rel"]))
     r = results.get(variant) or {}
     inputs: dict[str, Any] = {"variant": variant, "delta_rel": delta_rel}
     equiv = r.get("equiv") or {}
+    carrier, why = _carrier_flag(equiv, "macro", power)
+    inputs["carrier"] = {"macro": carrier, "e0": why}
     ci_eq = _ci(equiv.get("diff_ci90"))
     shots = {k: _ci((r.get("fewshot") or {}).get(k, {}).get("diff_ci95")) for k in ("1", "10")}
     ci_full = _ci((r.get("full") or {}).get("diff_ci95"))
     effect = {"equiv": ci_eq.point if ci_eq else None, "fewshot": {k: (c.point if c else None) for k, c in shots.items()},
               "full": ci_full.point if ci_full else None}
     cis = {"equiv": _d(ci_eq), "fewshot": {k: _d(c) for k, c in shots.items()}, "full": _d(ci_full)}
-    if not equiv.get("carrier", True):
-        return Verdict(INSUFFICIENT, effect, cis, "macroAUC не несёт разность AUC по таблице мощности E0", inputs,
-                       "H1b")
+    if carrier is False:
+        return Verdict(INSUFFICIENT, effect, cis, f"macroAUC не несёт разность AUC по таблице мощности E0 ({why})",
+                       inputs, "H1b")
     missing = [n for n, c in (("(i) equiv", ci_eq), ("(ii) 1-shot", shots["1"]), ("(ii) 10-shot", shots["10"]),
                               ("(ii) full", ci_full)) if c is None]
     if missing or equiv.get("reference") is None:
         return Verdict(INSUFFICIENT, effect, cis, "нет ДИ для: " + ", ".join(missing or ["reference"]), inputs,
                        "H1b")
+    if carrier is None:
+        raise _unknown_carrier("H1b", f"macroAUC ({variant})")
     delta = equivalence_margin(float(equiv["reference"]), delta_rel)
     t = tost(ci_eq, delta)
     few_ok = {k: bool(c.contains(0.0) or c.low > 0) for k, c in shots.items()}
@@ -199,9 +261,10 @@ def verdict_h1b(results: Mapping[str, Any], variant: str = "real_fly", cfg: Conf
     return Verdict(status, effect, cis, f"{variant}: " + "; ".join(parts), inputs, "H1b")
 
 
-def verdicts_h1b(results: Mapping[str, Any], cfg: Configs | None = None) -> dict[str, Verdict]:
+def verdicts_h1b(results: Mapping[str, Any], cfg: Configs | None = None,
+                 power: Mapping[str, Any] | None = None) -> dict[str, Verdict]:
     """Both H1b verdicts, real fly and FlyHash separately."""
-    return {v: verdict_h1b(results, v, cfg) for v in ("real_fly", "flyhash")}
+    return {v: verdict_h1b(results, v, cfg, power) for v in ("real_fly", "flyhash")}
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -266,7 +329,8 @@ def _h3_part(row: Mapping[str, Any] | None, delta_rel: float, alpha: float) -> d
             "sign": "measured>null" if ci.point > 0 else ("measured<null" if ci.point < 0 else "0")}
 
 
-def verdict_h3(results: Mapping[str, Any], cfg: Configs | None = None) -> Verdict:
+def verdict_h3(results: Mapping[str, Any], cfg: Configs | None = None,
+               power: Mapping[str, Any] | None = None) -> Verdict:
     """H3 (ТЗ Этап 4). Precondition: macroAUC of the real fly (Bloom, full training) on validation >= 0.75
     (``stats.preconditions.h3_val_macro_auc``). Confirmed when TOST on test macroAUC holds for the primary readout:
     the 90 % two-stage-bootstrap CI of macroAUC(measured M) − mean macroAUC(curveball nulls) lies inside ±δ, δ =
@@ -276,7 +340,8 @@ def verdict_h3(results: Mapping[str, Any], cfg: Configs | None = None) -> Verdic
 
     ``results = {"val_macro_auc", "primary": {"diff_ci90", "reference", "p_randomization", "carrier"?},
     "secondary": {name: {...same...}}, "p_values": {name: p}? (Holm over secondary sources/metrics),
-    "precondition"?, "delta_rel"?, "alpha"?}``.
+    "precondition"?, "delta_rel"?, "alpha"?}``; ``power`` (the E0 table, row ``macro``) supersedes the ``carrier``
+    flag of ``primary``.
     """
     st = _cfg_stats(cfg)
     pre = float(results.get("precondition", st["preconditions"]["h3_val_macro_auc"]))
@@ -284,6 +349,7 @@ def verdict_h3(results: Mapping[str, Any], cfg: Configs | None = None) -> Verdic
     alpha = float(results.get("alpha", st["bootstrap"]["alpha"]))
     val = results.get("val_macro_auc")
     primary = results.get("primary") or {}
+    carrier, why = _carrier_flag(primary, "macro", power)
     part = _h3_part(primary, delta_rel, alpha)
     secondary = {k: _h3_part(v, delta_rel, alpha) for k, v in (results.get("secondary") or {}).items()}
     pv = {k: float(v) for k, v in (results.get("p_values") or {}).items() if v is not None}
@@ -291,19 +357,21 @@ def verdict_h3(results: Mapping[str, Any], cfg: Configs | None = None) -> Verdic
     effect = ci.point if ci else None
     cis = _d(ci)
     inputs = {"val_macro_auc": val, "precondition": pre, "delta_rel": delta_rel, "primary": part,
-              "secondary": secondary, "holm": holm(pv) if pv else {}}
+              "secondary": secondary, "holm": holm(pv) if pv else {}, "carrier": {"macro": carrier, "e0": why}}
     if val is None or not math.isfinite(float(val)):
         return Verdict(INSUFFICIENT, effect, cis, "нет macroAUC настоящей мухи на валидации", inputs, "H3")
     if float(val) < pre:
         return Verdict(PRECONDITION, effect, cis, f"macroAUC мухи на валидации {float(val):.3f} < {pre:g}", inputs,
                        "H3")
-    if not primary.get("carrier", True):
-        return Verdict(INSUFFICIENT, effect, cis, "macroAUC не несёт разность AUC по таблице мощности E0", inputs,
-                       "H3")
+    if carrier is False:
+        return Verdict(INSUFFICIENT, effect, cis, f"macroAUC не несёт разность AUC по таблице мощности E0 ({why})",
+                       inputs, "H3")
     if part is None or "equivalent" not in part:
         return Verdict(INSUFFICIENT, effect, cis, "нет 90% ДИ разности macroAUC(измеренная) − среднее по нулям",
                        inputs, "H3")
-    p_txt = "—" if part["p_randomization"] is None else f"{part['p_randomization']:.3g}"
+    if carrier is None:
+        raise _unknown_carrier("H3", "macroAUC (primary readout)")
+    p_txt = _fmt_p(part["p_randomization"])
     reason = (f"основной выход Bloom: {part['reading']} (90% ДИ {ci.point:+.4f} [{ci.low:+.4f}, {ci.high:+.4f}], "
               f"δ={part['delta']:.4f}, p рандомизации={p_txt})")
     sec_txt = [f"{k}: {v['reading']}" if v and "reading" in v else f"{k}: нет ДИ" for k, v in secondary.items()]

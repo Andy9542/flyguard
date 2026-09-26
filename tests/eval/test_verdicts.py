@@ -1,10 +1,15 @@
-"""verdicts.py: each of the four rules on hand-built inputs, reaching all four statuses."""
+"""verdicts.py: each of the four rules on hand-built inputs, reaching all four statuses; the E0 gate is mandatory."""
 from __future__ import annotations
 
 import pytest
 
 from flyguard.eval.verdicts import (CONFIRMED, INSUFFICIENT, PRECONDITION, REFUTED, Verdict, carriers_from_power,
                                     verdict_h1a, verdict_h1b, verdict_h2, verdict_h3, verdicts_h1b)
+
+
+def _power(**rows):
+    """A minimal E0 table: ``_power(deep=True, dojo=False, macro=True)``."""
+    return {"carriers": {s: {"auc_diff": "несёт" if v else "не хватило данных"} for s, v in rows.items()}}
 
 
 def _h1a(ci_dict, template_ok=True, semantic_ok=True, carriers=("deep", "dojo"), semantic=("para", "bipia", "dyn")):
@@ -47,11 +52,58 @@ def test_h1a_all_statuses(ci_dict):
     assert set(v.to_dict()) == {"status", "effect", "ci", "reason", "inputs", "hypothesis"}
 
 
-def _h1b(ci_dict, equiv=True, few=True, full=True):
+def test_h1a_carrier_without_interval_is_missing_data(ci_dict):
+    """The rule reads "на каждом из {deep, dojo}, несущем разность": a carrier with no CI cannot be skipped."""
+    r = _h1a(ci_dict)
+    r["template"]["deep"]["diff_ci90"] = None
+    v = verdict_h1a(r)
+    assert v.status == INSUFFICIENT and "deep" in v.reason and "несущего" in v.reason
+    assert v.inputs["template"]["deep"] == {"status": "нет ДИ", "carrier": True, "e0": "несёт по E0"}
+    r = _h1a(ci_dict)
+    r["template"]["deep"]["reference"] = None
+    assert verdict_h1a(r).status == INSUFFICIENT
+    r = _h1a(ci_dict)
+    del r["template"]["deep"]  # row absent entirely
+    v = verdict_h1a(r)
+    assert v.status == INSUFFICIENT and v.inputs["template"]["deep"]["status"] == "нет данных"
+    # a non-carrier without an interval is legitimately skipped
+    r = _h1a(ci_dict, carriers=("dojo",))
+    r["template"]["deep"] = {"carrier": False}
+    assert verdict_h1a(r).status == CONFIRMED
+
+
+def test_h1a_e0_gate_is_mandatory(ci_dict):
+    r = _h1a(ci_dict)
+    del r["template"]["deep"]["carrier"]
+    with pytest.raises(ValueError, match="E0"):
+        verdict_h1a(r)  # data present, carrier status unknown, no power table: never a silent "carries"
+    # the E0 table supersedes the per-row flags
+    assert verdict_h1a(r, power=_power(deep=True, dojo=True)).status == CONFIRMED
+    bad = _h1a(ci_dict)
+    bad["template"]["deep"]["diff_ci90"] = ci_dict(-0.2, -0.3, -0.1, 0.9)
+    assert verdict_h1a(bad, power=_power(deep=False, dojo=True)).status == CONFIRMED  # row flag True is overridden
+    assert verdict_h1a(bad, power=_power(deep=True, dojo=True)).status == REFUTED
+    v = verdict_h1a(bad, power=_power(dojo=True))  # deep absent from the E0 table: did not go through E0
+    assert v.status == CONFIRMED and v.inputs["template"]["deep"]["status"] == "нет в таблице E0"
+    assert verdict_h1a(bad, power=_power(macro=True)).status == INSUFFICIENT
+
+
+def test_h1a_nan_p_is_missing_input(ci_dict):
+    r = _h1a(ci_dict)
+    r["semantic"]["para"]["p"] = float("nan")
+    v = verdict_h1a(r)  # no TypeError from formatting a dropped Holm entry
+    assert v.status == INSUFFICIENT and "para" in v.reason and v.inputs["semantic"]["para"]["status"] == "нет p"
+    r = _h1a(ci_dict)
+    r["semantic"]["bipia"] = {"diff_ci95": ci_dict(0.05, 0.05, 0.05)}  # degenerate interval, no p
+    v = verdict_h1a(r)
+    assert v.status == INSUFFICIENT and v.inputs["semantic"]["bipia"]["p_approximate"]
+
+
+def _h1b(ci_dict, equiv=True, few=True, full=True, carrier=True):
     def part():
         return {
             "equiv": {"diff_ci90": ci_dict(0.0, -0.02, 0.02, 0.9) if equiv else ci_dict(-0.05, -0.08, -0.02, 0.9),
-                      "reference": 0.8},
+                      "reference": 0.8, "carrier": carrier},
             "fewshot": {"1": {"diff_ci95": ci_dict(0.02, -0.01, 0.05) if few else ci_dict(-0.05, -0.08, -0.02)},
                         "10": {"diff_ci95": ci_dict(0.05, 0.02, 0.08)}},
             "full": {"diff_ci95": ci_dict(-0.05, -0.08, -0.02) if full else ci_dict(0.0, -0.02, 0.02)},
@@ -71,10 +123,16 @@ def test_h1b_all_statuses(ci_dict):
     both = verdicts_h1b(r)
     assert both["real_fly"].status == CONFIRMED and both["flyhash"].status == INSUFFICIENT
     assert "10-shot" in both["flyhash"].reason
-    r = _h1b(ci_dict)
-    r["real_fly"]["equiv"]["carrier"] = False
-    assert verdict_h1b(r, "real_fly").status == INSUFFICIENT
+    assert verdict_h1b(_h1b(ci_dict, carrier=False), "real_fly").status == INSUFFICIENT
     assert verdict_h1b({}, "real_fly").status == INSUFFICIENT
+    # E0 gate: complete data without a known carrier status raises; the power table supersedes the flag
+    r = _h1b(ci_dict)
+    del r["real_fly"]["equiv"]["carrier"]
+    with pytest.raises(ValueError, match="E0"):
+        verdict_h1b(r, "real_fly")
+    assert verdict_h1b(r, "real_fly", power=_power(macro=True)).status == CONFIRMED
+    assert verdict_h1b(_h1b(ci_dict), "real_fly", power=_power(macro=False)).status == INSUFFICIENT
+    assert verdicts_h1b(r, power=_power(macro=True))["flyhash"].status == CONFIRMED
 
 
 def _h2(ci_dict, val=0.9, corridor=True, piguard=True):
@@ -135,6 +193,14 @@ def test_h3_all_statuses(ci_dict):
     wide["primary"]["diff_ci90"] = ci_dict(0.0, -0.1, 0.1, 0.9)
     v = verdict_h3(wide)
     assert v.status == REFUTED and "шире коридора" in v.reason
+    # E0 gate
+    r = _h3(ci_dict)
+    del r["primary"]["carrier"]
+    with pytest.raises(ValueError, match="E0"):
+        verdict_h3(r)
+    assert verdict_h3(r, power=_power(macro=True)).status == CONFIRMED
+    assert verdict_h3(_h3(ci_dict), power=_power(macro=False)).status == INSUFFICIENT
+    assert verdict_h3(_h3(ci_dict, p=None), power=_power(macro=True)).status == CONFIRMED  # None p formats as "—"
 
 
 def test_carriers_from_power():

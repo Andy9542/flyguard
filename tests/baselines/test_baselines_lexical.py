@@ -74,13 +74,16 @@ def test_tfidf_lr_with_c_unl_idf(data):
     assert np.allclose(norms, 1.0)
 
 
-def test_tfidf_lr_counts_input_and_train_idf_fallback(data):
+def test_tfidf_lr_refuses_train_idf_unless_allowed_explicitly(data):
+    """ТЗ 1.9: the idf comes from C_unl; fitting without it is an error, not a warning."""
     Xc_tr, Xc_va, Xc_te, _ = data["counts"]
     y_tr, y_va, y_te = data["y"]
-    m = TfidfLR(GRID, seed=0, tf="counts")
+    with pytest.raises(ValueError, match="C_unl"):
+        TfidfLR(GRID, seed=0, tf="counts").fit(Xc_tr, y_tr, Xc_va, y_va)
+    m = TfidfLR(GRID, seed=0, tf="counts", allow_train_idf=True)
     with pytest.warns(RuntimeWarning, match="C_unl"):
         _check(m, Xc_tr, y_tr, Xc_va, y_va, Xc_te, y_te)
-    assert m.idf_source_ == "train"
+    assert m.idf_source_ == "train" and m.c_source_ == "val" and set(m.c_table_) == {str(c) for c in GRID}
     with pytest.raises(ValueError):
         TfidfLR(GRID, tf="bogus")
 
@@ -149,7 +152,9 @@ def test_lr_svd_val_cv_and_default_c_sources():
     assert m.name == "lr_svd"
     _check(m, X_tr, y_tr, X_va, y_va, X_te, y_te)
     assert m.c_source_ == "val"
-    m_cv = LRSvd(GRID, seed=0).fit(X_tr, y_tr)
+    with pytest.raises(ValueError, match="groups"):        # cv without per-window groups is refused
+        LRSvd(GRID, seed=0).fit(X_tr, y_tr)
+    m_cv = LRSvd(GRID, seed=0).fit(X_tr, y_tr, groups=np.arange(len(y_tr)) // 2)   # two windows per document
     assert m_cv.c_source_ == "cv" and roc_auc_score(y_te, m_cv.score(X_te)) > 0.9
     m_sparse = LRSvd(GRID, seed=0).fit(sp.csr_matrix(X_tr), y_tr, sp.csr_matrix(X_va), y_va)
     assert np.allclose(m_sparse.score(sp.csr_matrix(X_te)), m.score(X_te), atol=1e-6)
@@ -168,9 +173,11 @@ def test_two_row_training_does_not_crash_e2_shots_one(data):
     Xs, ys = svd_problem(2, 0)
     ys[:] = [0, 1]
     assert LRSvd(GRID).fit(Xs, ys).c_source_ == "default"
-    # single-class validation set is ignored, not fatal
-    t2 = TfidfLR(GRID, seed=0, X_unl=X_unl).fit(X_tr, y_tr, X_te[:5], np.ones(5))
+    # single-class validation set is ignored, not fatal: grouped cv takes over (groups required)
+    t2 = TfidfLR(GRID, seed=0, X_unl=X_unl).fit(X_tr, y_tr, X_te[:5], np.ones(5), groups=np.arange(len(y_tr)))
     assert t2.c_source_ == "cv"
+    # two rows with groups: cv infeasible -> default, no error
+    assert TfidfLR(GRID, seed=0, X_unl=X_unl).fit(X2, y2, groups=["a", "b"]).c_source_ == "default"
 
 
 def test_select_c_prefers_smallest_c_among_ties():

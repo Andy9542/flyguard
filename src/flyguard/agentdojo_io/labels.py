@@ -12,6 +12,7 @@ import json
 import re
 import unicodedata
 import zlib
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -42,10 +43,16 @@ PLACEHOLDERS = ("user", "model")
 TARGET_ARGS = ("recipient", "recipients", "cc", "bcc", "participants", "url", "repo_name", "product_ids", "title",
                "password", "save_dir", "destination_path", "source_path", "hotel", "channel", "user", "email",
                "filename", "file_id")
-"""Argument names treated as key arguments when a reference is derived from `data/processed/meta` ground truth
-(fallback only: `configs/harm_references.yaml` already lists every injection task). They are the arguments that
-name the *target* of a harmful call (who receives, where it goes, what is bought); free-text arguments such as
-`subject`, `body` or `amount` vary between agent runs and would make `full` unreachable."""
+"""Fallback copy of `configs/default.yaml` `extraction.harm_matching.target_args` for callers without a config
+(tests, ad-hoc probes); `extract.build_episode_documents` reads the frozen config value and passes it down.
+These are the argument names treated as key arguments when a reference is derived from `data/processed/meta`
+ground truth (fallback only: `configs/harm_references.yaml` already lists every injection task): the arguments
+that name the *target* of a harmful call (who receives, where it goes, what is bought); free-text arguments such
+as `subject`, `body` or `amount` vary between agent runs and would make `full` unreachable."""
+
+MAX_ARG_DEPTH = 32
+"""Nesting depth beyond which a tool argument is no longer flattened (a guard against pathological inputs, not
+a rule of the contract: real arguments are one or two levels deep)."""
 
 _IBAN_RE = re.compile(r"^[a-z]{2}[0-9]{2}[a-z0-9]{4,30}$")
 _SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://")
@@ -169,15 +176,68 @@ def decode_yaml_escapes(text: str) -> tuple[str, list[int], bool]:
     return "".join(out), idx, changed
 
 
+_HANGUL_V_T = range(0x1160, 0x1200)
+"""Hangul vowel and trailing jamo: starters (combining class 0) that nevertheless compose with the preceding
+leading jamo / LV syllable, so they must stay in the segment of the character before them."""
+
+
+def _nfkc_segments(text: str) -> list[tuple[int, int]]:
+    """[start, end) segments of `text` that NFKC normalises independently of each other: a segment begins at a
+    starter (canonical combining class 0, not a Hangul V/T jamo) and runs through the combining marks and jamo
+    that follow it, so canonical reordering and composition (`e` + U+0301 -> `é`, jamo -> syllable) happen
+    inside one segment. Per-character normalisation would miss exactly those compositions and shift every
+    index after them."""
+    bounds = [0] + [i for i in range(1, len(text))
+                    if unicodedata.combining(text[i]) == 0 and ord(text[i]) not in _HANGUL_V_T]
+    return list(zip(bounds, bounds[1:] + [len(text)]))
+
+
+def _nfkc_pieces(text: str) -> list[tuple[int, int, str]]:
+    """(start, end, NFKC of text[start:end]) per segment, merged until the concatenation equals the whole-string
+    NFKC result. Composites formed from two starters (a handful of Indic vowel signs) are not caught by the
+    combining-class segmentation; the prefix check finds the first segment whose normal form disagrees with
+    the whole-string result and merges it with its right neighbour, which is where such an interaction lives.
+    Bounded by the number of segments; the last resort is one segment for the whole text (still exact as a
+    string, coarse as a map — reachable only by a composition that spans non-adjacent segments, which Unicode
+    normalisation does not define)."""
+    full = unicodedata.normalize("NFKC", text)
+    segs = _nfkc_segments(text)
+    pieces = [(a, b, unicodedata.normalize("NFKC", text[a:b])) for a, b in segs]
+    for _ in range(len(pieces)):
+        pos, k = 0, None
+        for j, (_, _, piece) in enumerate(pieces):
+            if not full.startswith(piece, pos):
+                k = j
+                break
+            pos += len(piece)
+        if k is None and pos == len(full):
+            return pieces
+        if k is None:  # every piece matched but the result is shorter: an interaction at the very end
+            k = len(pieces) - 1
+        if k == len(pieces) - 1:
+            k -= 1
+        if k < 0:
+            break
+        a, _, _ = pieces[k]
+        _, b, _ = pieces[k + 1]
+        pieces[k:k + 2] = [(a, b, unicodedata.normalize("NFKC", text[a:b]))]
+    return [(0, len(text), full)]
+
+
 def normalize_with_map(text: str) -> tuple[str, list[int]]:
-    """Per-character version of the ТЗ 1.2 normalisation that also returns, for every output character, the
-    index of the input character it came from (a collapsed whitespace run maps to its first character). Used
-    only to translate spans found in decoded text back into `documents.text` coordinates."""
+    """The ТЗ 1.2 normalisation (NFKC, whitespace runs -> one space, stripped) that also returns, for every
+    output character, the index of the input character it came from: an output character of a segment maps to
+    the segment's start plus its offset (capped at the segment's last character), a collapsed whitespace run
+    maps to its first character. The output string equals `normalize_text(text)` by construction (whole-string
+    NFKC, see `_nfkc_pieces`); `injection_spans_report` still checks that equality before it trusts the map.
+    Used only to translate spans found in decoded text back into `documents.text` coordinates."""
     out: list[str] = []
     idx: list[int] = []
     ws_start: int | None = None
-    for i, ch in enumerate(text):
-        for c in unicodedata.normalize("NFKC", ch):
+    for a, b, piece in _nfkc_pieces(text):
+        last = max(b - a - 1, 0)
+        for j, c in enumerate(piece):
+            i = a + min(j, last)
             if c.isspace():
                 if ws_start is None:
                     ws_start = i
@@ -200,15 +260,31 @@ def _find_all(haystack: str, needle: str) -> list[tuple[int, int]]:
     return found
 
 
-def injection_spans_detail(step_text: str, injections: dict[str, str] | Iterable[str], fill: dict[str, str] | None = None,
-                           allow_escaped: bool = True) -> tuple[list[tuple[int, int]], str | None]:
+@dataclass(frozen=True)
+class SpanReport:
+    """Result of `injection_spans_report`: the spans, how they were found (`exact` / `yaml_escaped` / None) and
+    whether the index maps of the escaped pass agreed with `normalize_text` (`map_ok`). `map_ok=False` means
+    the escaped pass was *skipped* for this step rather than trusted; `extract` counts such steps."""
+
+    spans: list[tuple[int, int]] = field(default_factory=list)
+    mode: str | None = None
+    map_ok: bool = True
+
+
+def injection_spans_report(step_text: str, injections: dict[str, str] | Iterable[str], fill: dict[str, str] | None = None,
+                           allow_escaped: bool = True) -> SpanReport:
     """`injection_spans` plus how the spans were found: `exact` (every span by the ТЗ rule), `yaml_escaped` (at
     least one injection occurs in the step only as a YAML quoted-scalar rendering, see `decode_yaml_escapes`),
     or None (no span). The fallback runs per injection string, so a step that shows one injection verbatim and
-    another one escaped (episodes carry up to four injection strings) gets both spans."""
+    another one escaped (episodes carry up to four injection strings) gets both spans. `allow_escaped` is the
+    frozen switch `extraction.decode_yaml_quoted_scalars` (DEVIATIONS D7): with False only the literal rule runs.
+
+    The escaped pass maps indices decoded -> raw -> normalised through `normalize_with_map`; before any span is
+    taken from it, both maps' output strings are compared with `normalize_text` of the same input, and on a
+    disagreement the pass is skipped (`map_ok=False`) instead of clamping a drifted span onto the document."""
     text = normalize_text(step_text)
     if not text:
-        return [], None
+        return SpanReport()
     values = list(injections.values() if isinstance(injections, dict) else injections)
     needles = [normalize_text(fill_placeholders(str(raw), fill)) for raw in values]
     needles = [nd for nd in needles if nd]
@@ -221,22 +297,32 @@ def injection_spans_detail(step_text: str, injections: dict[str, str] | Iterable
         else:
             remaining.append(needle)
     escaped: list[tuple[int, int]] = []
+    map_ok = True
     if remaining and allow_escaped and ("\\" in step_text or "''" in step_text):
         decoded, dec_to_raw, changed = decode_yaml_escapes(step_text)
         if changed:
             dnorm, dn_to_dec = normalize_with_map(decoded)
-            _, rn_to_raw = normalize_with_map(step_text)
-            for needle in remaining:
-                for a, b in _find_all(dnorm, needle):
-                    raw_a = dec_to_raw[dn_to_dec[a]]
-                    raw_b = dec_to_raw[dn_to_dec[b - 1]]
-                    start = bisect.bisect_left(rn_to_raw, raw_a)
-                    end = bisect.bisect_right(rn_to_raw, raw_b)
-                    if end > start:
-                        escaped.append((min(start, len(text)), min(end, len(text))))
+            rnorm, rn_to_raw = normalize_with_map(step_text)
+            map_ok = rnorm == text and dnorm == normalize_text(decoded) and len(rn_to_raw) == len(text)
+            if map_ok:
+                for needle in remaining:
+                    for a, b in _find_all(dnorm, needle):
+                        raw_a = dec_to_raw[dn_to_dec[a]]
+                        raw_b = dec_to_raw[dn_to_dec[b - 1]]
+                        start = bisect.bisect_left(rn_to_raw, raw_a)
+                        end = bisect.bisect_right(rn_to_raw, raw_b)
+                        if 0 <= start < end <= len(text):
+                            escaped.append((start, end))
     if not exact and not escaped:
-        return [], None
-    return _merge_spans(exact + escaped), (SPAN_YAML_ESCAPED if escaped else SPAN_EXACT)
+        return SpanReport([], None, map_ok)
+    return SpanReport(_merge_spans(exact + escaped), (SPAN_YAML_ESCAPED if escaped else SPAN_EXACT), map_ok)
+
+
+def injection_spans_detail(step_text: str, injections: dict[str, str] | Iterable[str], fill: dict[str, str] | None = None,
+                           allow_escaped: bool = True) -> tuple[list[tuple[int, int]], str | None]:
+    """(spans, mode) of `injection_spans_report` — the pair most callers need."""
+    report = injection_spans_report(step_text, injections, fill, allow_escaped)
+    return report.spans, report.mode
 
 
 def injection_spans(step_text: str, injections: dict[str, str] | Iterable[str], fill: dict[str, str] | None = None,
@@ -308,38 +394,56 @@ def normalize_value(value: Any) -> str:
     return s
 
 
+_PARSE_ERRORS = (ValueError, SyntaxError, TypeError, RecursionError, MemoryError)
+"""What a stringified argument may raise while being parsed; a pathologically nested bracket string must count
+as one opaque item, not abort the extraction of the whole benchmark."""
+
+
 def _parse_listish(value: str) -> list[Any] | None:
     stripped = value.strip()
     if len(stripped) >= 2 and stripped[0] in "[(" and stripped[-1] in "])":
         try:
             parsed = ast.literal_eval(stripped)
-        except (ValueError, SyntaxError):
+        except _PARSE_ERRORS:
             try:
                 parsed = json.loads(stripped)
-            except ValueError:
+            except _PARSE_ERRORS:
                 return None
         if isinstance(parsed, (list, tuple, set)):
             return list(parsed)
     return None
 
 
-def arg_items(value: Any) -> list[str]:
+def _opaque_item(value: Any) -> list[str]:
+    try:
+        return [normalize_value(str(value))]
+    except (RecursionError, MemoryError):
+        return []
+
+
+def arg_items(value: Any, _depth: int = 0) -> list[str]:
     """Flatten an argument into the normalised strings it holds ("lists become sets", design §3): a string is one
     item (or its elements when it is a stringified list such as `"['a@b.com']"`), a list/tuple/set its flattened
-    elements, a dict its JSON plus its values, scalars their text, `None` nothing."""
+    elements, a dict its JSON plus its values, scalars their text, `None` nothing. Nesting deeper than
+    `MAX_ARG_DEPTH` is not flattened further (one opaque item), so no argument can exhaust the stack."""
     if value is None:
         return []
+    if _depth > MAX_ARG_DEPTH:
+        return _opaque_item(value)
     if isinstance(value, str):
         parsed = _parse_listish(value)
         if parsed is not None:
-            return [it for v in parsed for it in arg_items(v)]
+            return [it for v in parsed for it in arg_items(v, _depth + 1)]
         return [normalize_value(value)]
     if isinstance(value, (list, tuple, set)):
-        return [it for v in value for it in arg_items(v)]
+        return [it for v in value for it in arg_items(v, _depth + 1)]
     if isinstance(value, dict):
-        out = [normalize_value(json.dumps(value, ensure_ascii=False, sort_keys=True))]
+        try:
+            out = [normalize_value(json.dumps(value, ensure_ascii=False, sort_keys=True))]
+        except (RecursionError, MemoryError, TypeError, ValueError):
+            out = []
         for v in value.values():
-            out.extend(arg_items(v))
+            out.extend(arg_items(v, _depth + 1))
         return out
     return [normalize_value(value)]
 
@@ -436,14 +540,24 @@ def load_harm_references(path: str | Path = HARM_REFERENCES_PATH) -> dict[str, d
     return {str(k): (v or {}) for k, v in data.items() if "/" in str(k)}
 
 
-def meta_reference_calls(meta: dict[str, Any], injection_task: str) -> list[dict[str, Any]] | None:
+def target_args_from_cfg(cfg: Configs | None = None) -> tuple[str, ...]:
+    """`extraction.harm_matching.target_args` of the frozen config (fallback: the module copy `TARGET_ARGS`)."""
+    section = ((cfg or _default_cfg()).default.get("extraction") or {}).get("harm_matching") or {}
+    values = section.get("target_args")
+    return tuple(str(v) for v in values) if values else TARGET_ARGS
+
+
+def meta_reference_calls(meta: dict[str, Any], injection_task: str,
+                         target_args: Iterable[str] | None = None) -> list[dict[str, Any]] | None:
     """Fallback reference calls from `data/processed/meta/<benchmark>_<suite>.json` ground truth for an injection
-    task missing from the YAML: one entry per ground-truth call that has at least one `TARGET_ARGS` argument
-    whose placeholder is not a `$...` value (the YAML header states that placeholder arguments are not keys);
+    task missing from the YAML: one entry per ground-truth call that has at least one target argument
+    (`target_args`, the config's `extraction.harm_matching.target_args`; `TARGET_ARGS` when not given) whose
+    placeholder is not a `$...` value (the YAML header states that placeholder arguments are not keys);
     `recipients`/`cc`/`bcc` are merged into the `recipients|cc|bcc` alternative used by the YAML. Ground-truth
     calls without any target argument (reads such as `get_balance`, `search_emails`) are *source* calls: they
     cannot identify the harm, so they are dropped rather than turned into name-only references. Returns None
     when the task is unknown to the meta file, `[]` when its ground truth has no usable call."""
+    targets = set(target_args) if target_args is not None else set(TARGET_ARGS)
     task = (meta.get("injection_tasks") or {}).get(injection_task)
     if task is None:
         return None
@@ -455,7 +569,7 @@ def meta_reference_calls(meta: dict[str, Any], injection_task: str) -> list[dict
         placeholders = gt.get("placeholder_args") or {}
         key: dict[str, Any] = {}
         for name, value in args.items():
-            if name not in TARGET_ARGS or value in (None, "", [], {}):
+            if name not in targets or value in (None, "", [], {}):
                 continue
             if str(placeholders.get(name, "")).startswith("$"):
                 continue
@@ -481,16 +595,18 @@ def load_meta(benchmark: str, suite: str, meta_dir: str | Path = META_DIR) -> di
 
 
 def reference_calls(benchmark: str, suite: str, injection_task: str | None, refs: dict[str, dict[str, Any]],
-                    meta: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]] | None, str]:
+                    meta: dict[str, Any] | None = None,
+                    target_args: Iterable[str] | None = None) -> tuple[list[dict[str, Any]] | None, str]:
     """Reference calls of an injection task and where they came from: `yaml:<source>` (harm_references.yaml),
-    `meta` (ground-truth fallback), `missing` (neither -> `[]`, i.e. unmatched), `none` (benign episode)."""
+    `meta` (ground-truth fallback with `target_args`, see `meta_reference_calls`), `missing` (neither -> `[]`,
+    i.e. unmatched), `none` (benign episode)."""
     if injection_task is None:
         return None, "none"
     entry = refs.get(f"{benchmark}/{suite}/{injection_task}")
     if entry is not None:
         return list(entry.get("calls") or []), f"yaml:{entry.get('source', 'unknown')}"
     if meta is not None:
-        calls = meta_reference_calls(meta, injection_task)
+        calls = meta_reference_calls(meta, injection_task, target_args)
         if calls is not None:
             return calls, "meta"
     return [], "missing"
@@ -533,17 +649,53 @@ def is_e1_val_task(user_task_id: str, rule: dict[str, Any] | None = None) -> boo
     return _hash_rule_holds(user_task_id, rule or e1_val_rule())
 
 
-def val_task_ids(task_ids: Iterable[str], seed: int, fraction: float) -> set[str]:
+AGENTDYN_ALL_CLEAN_TO_VALIDATION = "validation"
+"""Value of `splits.contract.agentdyn_clean_non_test` under which every clean non-test AgentDyn run is
+threshold-validation material (contract §6, ASSUMPTIONS A19)."""
+
+
+def val_task_ids(task_ids: Iterable[str], seed: int, fraction: float, key: str | None = None) -> set[str]:
     """Contract §6 validation tasks: a deterministic `fraction` of the given (non-test) task ids, drawn by a
     seeded permutation of the sorted ids (`seed` = the `subsample` child of global seed 0; the split is data, not
-    an experiment, design §2). Rounded to the nearest count; at least one task when there are any."""
+    an experiment, design §2). Rounded to the nearest count; at least one task when there are any. `key`
+    (e.g. `"agentdojo/workspace"`) spawns a child stream `default_rng([seed, crc32(key)])`, so that suites with
+    the same number of tasks do not receive the same permutation and hence the same task numbers."""
     ids = sorted({str(t) for t in task_ids})
     if not ids:
         return set()
     n_val = int(round(float(fraction) * len(ids)))
     n_val = min(len(ids), max(n_val, 1 if fraction > 0 else 0))
-    order = np.random.default_rng(int(seed)).permutation(len(ids))
+    entropy = [int(seed), _crc32(str(key))] if key is not None else int(seed)
+    order = np.random.default_rng(entropy).permutation(len(ids))
     return {ids[i] for i in order[:n_val]}
+
+
+def agentdyn_all_clean_to_validation(rule: dict[str, Any] | None = None) -> bool:
+    rule = rule or contract_rule()
+    return str(rule.get("agentdyn_clean_non_test", "")).lower() == AGENTDYN_ALL_CLEAN_TO_VALIDATION
+
+
+def validation_tasks(benchmark: str, suite: str, non_test_ids: Iterable[str], seed: int,
+                     rule: dict[str, Any] | None = None) -> set[str]:
+    """Contract §6 validation tasks of one (benchmark, suite): for AgentDojo `val_fraction` of the non-test
+    tasks (`val_task_ids` keyed by `<benchmark>/<suite>`); for AgentDyn, when
+    `splits.contract.agentdyn_clean_non_test == "validation"`, *all* non-test tasks — FlyGuard learns nothing
+    from AgentDyn (one template only), so its clean non-test runs all feed the threshold validation and the
+    second team's observation (contract §6, ASSUMPTIONS A19)."""
+    rule = rule or contract_rule()
+    if benchmark == "agentdyn" and agentdyn_all_clean_to_validation(rule):
+        return {str(t) for t in non_test_ids}
+    return val_task_ids(non_test_ids, seed, float(rule.get("val_fraction", 0.2)), key=f"{benchmark}/{suite}")
+
+
+def validation_rule_text(benchmark: str, rule: dict[str, Any] | None = None) -> str:
+    """Human-readable statement of `validation_tasks` for the manifests."""
+    rule = rule or contract_rule()
+    if benchmark == "agentdyn" and agentdyn_all_clean_to_validation(rule):
+        return ("all non-test tasks: every clean non-test AgentDyn run is threshold validation "
+                "(splits.contract.agentdyn_clean_non_test = validation, contract §6)")
+    return (f"{rule.get('val_fraction', 0.2)} of the non-test tasks of each suite, rounded, at least one; order from "
+            f"numpy default_rng([val_seed, crc32('{benchmark}/<suite>')]) over the sorted task ids")
 
 
 def contract_split(user_task_id: str, attack: str | None, val_tasks: Iterable[str] = (),
