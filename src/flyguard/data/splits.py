@@ -104,8 +104,8 @@ def assign_e1_split(documents: pd.DataFrame, cfg: Any, seed_subsample: int) -> p
             split.iloc[i] = bip_map[documents["cluster_id"].iloc[i]]
         elif s == "dojo":
             given = existing.iloc[i]
-            if isinstance(given, str) and given in ("val", "test"):
-                split.iloc[i] = given          # agentdojo_io's E1 role; "train" is never accepted (labels: deepset only)
+            if isinstance(given, str) and given in ("val", "test", "unused"):
+                split.iloc[i] = given          # agentdojo_io's E1 role ("unused" = attacked val-task episodes, A25); "train" is never accepted
             else:
                 split.iloc[i] = "val" if is_agentdojo_val_task(str(metas[i].get("user_task", "")), cfg) else "test"
         else:

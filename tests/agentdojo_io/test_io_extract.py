@@ -159,3 +159,18 @@ def test_cli_writes_parquet_and_prints_counts(tmp_path, traces_tree, capsys, mon
     d = pd.read_parquet(tmp_path / "d.parquet")
     assert list(e.columns) == X.EPISODE_COLUMNS and list(d.columns) == X.DOCUMENT_COLUMNS and len(d) == out["documents"]
     assert (tmp_path / "s.json").exists()
+
+
+def test_attacked_val_task_episodes_get_the_unused_e1_role(built):
+    """A25: only clean outputs of AgentDojo validation tasks play a role in E1; attacked ones are 'unused'."""
+    from flyguard.agentdojo_io import labels as L
+    episodes, documents, _ = built
+    val_eps = episodes[episodes["e1_val_task"]]
+    attacked_val = set(val_eps[val_eps["injection_task"].notna()]["episode_id"])
+    clean_val = set(val_eps[val_eps["injection_task"].isna()]["episode_id"])
+    assert clean_val, "fixture must contain a clean validation-task episode"
+    ep_of = documents["meta_json"].map(lambda m: json.loads(m)["episode_id"])
+    assert set(documents.loc[ep_of.isin(clean_val), "split"]) == {L.SPLIT_VAL}
+    assert set(documents.loc[ep_of.isin(attacked_val), "split"]) <= {L.SPLIT_UNUSED}
+    others = documents.loc[~ep_of.isin(clean_val | attacked_val), "split"]
+    assert set(others) <= {L.SPLIT_TEST}

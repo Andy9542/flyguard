@@ -272,7 +272,16 @@ def build_episode_documents(cfg: Configs, benchmark: str, model: str | None = No
             stats["attacked_without_span"]["episode_ids"].append(rec["episode_id"])
             continue
 
-        e1_split = (L.SPLIT_VAL if rec["e1_val_task"] else L.SPLIT_TEST) if benchmark == "agentdojo" else L.SPLIT_TEST
+        # E1 role (ТЗ 1.8/1.10, ASSUMPTIONS A25): AgentDojo validation tasks (crc32 % 5 == 0) contribute only their
+        # clean outputs (role "val": P_val, C_unl, dedup reference); their attacked episodes have no role in E1
+        # ("unused": not val, not test, not a dedup reference), otherwise the static environments would make every
+        # identical test window a duplicate of a validation window. Everything else is test material.
+        if benchmark == "agentdojo" and rec["e1_val_task"]:
+            e1_split = L.SPLIT_VAL if not attacked else L.SPLIT_UNUSED
+        else:
+            e1_split = L.SPLIT_TEST
+        if e1_split == L.SPLIT_UNUSED:
+            stats["e1_unused_episodes"] = stats.get("e1_unused_episodes", 0) + 1
         cluster_id = f"{log.suite_name}/{log.user_task_id}"
         for step, step_spans, span_mode in zip(steps, spans, span_modes):
             text = L.normalize_text(step.output_text)

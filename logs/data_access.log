@@ -45,3 +45,17 @@
 2026-09-26T10:55:40Z	test	data/raw/notinject/NotInject_two.json	flyguard.data.loaders.load_notinject: build documents
 2026-09-26T10:55:40Z	test	data/raw/notinject/NotInject_three.json	flyguard.data.loaders.load_notinject: build documents
 2026-09-26T10:56:08Z	external	data/raw/piguard_train/train.json	flyguard.data.audit.contamination_audit: third-party training set (PIGuard) read for the ТЗ 3.2 overlap counts; texts never printed
+2026-09-26T11:03:23Z	test	data/traces/agentdojo/deepseek-flash/workspace	paraphrase bases: injections field of 40 trace logs (test tasks included; tool outputs never read or printed)
+2026-09-26T11:03:23Z	test	data/traces/agentdojo/deepseek-v4-pro/banking	paraphrase bases: injections field of 144 trace logs (test tasks included; tool outputs never read or printed)
+2026-09-26T11:03:23Z	test	data/traces/agentdojo/deepseek-v4-pro/slack	paraphrase bases: injections field of 105 trace logs (test tasks included; tool outputs never read or printed)
+2026-09-26T11:03:23Z	test	data/traces/agentdojo/deepseek-v4-pro/travel	paraphrase bases: injections field of 140 trace logs (test tasks included; tool outputs never read or printed)
+2026-09-26T11:03:23Z	test	data/traces/agentdojo/deepseek-v4-pro/workspace	paraphrase bases: injections field of 560 trace logs (test tasks included; tool outputs never read or printed)
+2026-09-26T11:03:23Z	test	data/raw/deepset/test.parquet	paraphrase bases
+2026-09-26T11:03:23Z	train	data/raw/deepset/train.parquet	chi2 extension of banned_words
+2026-09-26T11:10:38Z	test	data/traces/agentdojo/deepseek-v4-pro/banking	agentdojo_io.extract agentdojo: 160 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T11:10:38Z	test	data/traces/agentdojo/deepseek-v4-pro/slack	agentdojo_io.extract agentdojo: 126 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T11:10:38Z	test	data/traces/agentdojo/deepseek-v4-pro/travel	agentdojo_io.extract agentdojo: 160 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T11:10:38Z	test	data/traces/agentdojo/deepseek-v4-pro/workspace	agentdojo_io.extract agentdojo: 600 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T11:11:02Z	test	data/traces/agentdyn/deepseek-v4-pro/dailylife	agentdojo_io.extract agentdyn: 90 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T11:11:02Z	test	data/traces/agentdyn/deepseek-v4-pro/github	agentdojo_io.extract agentdyn: 83 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-26T11:11:02Z	test	data/traces/agentdyn/deepseek-v4-pro/shopping	agentdojo_io.extract agentdyn: 83 trace logs parsed into step documents (test tasks included; tool outputs never printed)

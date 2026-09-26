@@ -16,6 +16,7 @@
   "decode_yaml_quoted_scalars": true,
   "documents": 3840,
   "documents_positive": 1270,
+  "e1_unused_episodes": 208,
   "e1_val_task_episodes": 230,
   "empty_steps": 393,
   "episodes_by_attack": {
@@ -42,7 +43,7 @@
    "model": "DeepSeek",
    "user": "Emma Johnson"
   },
-  "generated": "2026-09-26T10:41:18Z",
+  "generated": "2026-09-26T11:10:38Z",
   "match_counts": {
    "full": 134,
    "name_only": 119,
@@ -873,7 +874,7 @@
    "model": "DeepSeek",
    "user": "Emma Johnson"
   },
-  "generated": "2026-09-26T10:41:41Z",
+  "generated": "2026-09-26T11:11:02Z",
   "match_counts": {
    "full": 11,
    "name_only": 38,

@@ -34,6 +34,7 @@ MATCH_NAME_ONLY = "name_only"
 MATCH_UNMATCHED = "unmatched"
 
 SPLIT_TEST, SPLIT_VAL, SPLIT_TRAIN, SPLIT_EXCLUDED = "test", "val", "train", "excluded"
+SPLIT_UNUSED = "unused"  # E1 role of attacked episodes of AgentDojo validation tasks (ASSUMPTIONS A25)
 
 HARM_REFERENCES_PATH = ROOT / "configs" / "harm_references.yaml"
 META_DIR = ROOT / "data" / "processed" / "meta"
