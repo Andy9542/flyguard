@@ -34,7 +34,7 @@ data/processed/meta/{agentdojo,agentdyn}_<suite>.json   tools, user-task prompts
 data/traces/{agentdojo,agentdyn}/<model>/<suite>/<user_task>/<attack|none>/<injection_task|none>.json
 data/paraphrases/{bases.jsonl,candidates.jsonl,judgements.jsonl,paraphrases.csv,paraphrases_manifest.json}
 data/processed/{documents.parquet,windows.parquet,episodes.parquet}
-data/manifests/{sources.json,audit.md,splits.json,pools.json,dedup.json,traces_extraction.json}
+data/manifests/{sources.json,audit.md,splits.json,pools.json,dedup.json,contamination.json,traces_extraction.json}
 results/{E0..E6}/<seed>.json  results/power.json  results/spend.json  results/pilot.json
 results/shared/{traces_manifest.json,split_manifest.json,<detector>.csv,traces/}
 ```
@@ -193,7 +193,8 @@ class BloomReadout:   # ТЗ 2.4 Bloom (FlyNN)
     def __init__(self, m: int, k: int, gamma: float, seed_subsample: int, normalized: bool = False)
     def fit(self, Z: csr[n, m], y: ndarray) -> self       # balance classes by subsampling the majority to the minority (seed); F_c[i] <- gamma * F_c[i] for active i; normalized variant F_c[i] = gamma ** (n_c(i) * N_min / N_c)
     def score(self, Z) -> ndarray[n] in [0,1]              # phi_c = 1 - mean_{i in supp z} F_c[i]; s = (phi_1 - phi_0 + 1)/2
-class LinearReadout:  # ТЗ 2.4 MBON: sklearn LogisticRegression(penalty=l2, C, class_weight='balanced', solver='liblinear' or 'saga'); score = predict_proba[:,1]
+def make_logistic(C, seed, cfg=None) -> LogisticRegression   # THE logistic regression (readout.linear in config: lbfgs, l2, balanced, max_iter 2000, tol 1e-4); baselines.common.make_logreg wraps it
+class LinearReadout:  # ТЗ 2.4 MBON: make_logistic(C) on the KC code; score = predict_proba[:,1]
 def select_gamma(...) / select_C(...)   # on validation AUC only; grids from config
 ```
 Unit tests of ТЗ 2.6 owned here: kwta gives exactly k; determinism per seed; different `nose`/`perm` seeds give
@@ -206,7 +207,7 @@ Common protocol (`common.py`):
 ```python
 class WindowScorer(Protocol):
     name: str
-    def fit(self, X_train, y_train, X_val=None, y_val=None) -> "WindowScorer"   # X = features of the detector's input space
+    def fit(self, X_train, y_train, X_val=None, y_val=None, groups=None) -> "WindowScorer"   # X = features of the detector's input space; groups = cluster_id (else doc_id) per train window, required when no two-class validation set is given (grouped CV)
     def score(self, X) -> ndarray[float]   # per window in [0,1] (or monotone score; document score = max over windows)
 ```
 - `regex.py`: `configs/regex_patterns.txt` (one Python regex per line, `#` comments), compiled case-insensitively;
@@ -268,7 +269,9 @@ def tost_equivalent(diff_ci90: CI, delta: float) -> bool; def holm(pvalues: dict
 # power.py  (E0)
 def power_table(cfg, sizes_by_source, val_runs) -> dict   # binormal simulation at AUC in {0.75,0.85,0.95}, observed cluster-size distribution, cluster bootstrap -> MDD of AUC difference and TOST power at ±δ; carrier rule: |P_test| >= 2000 -> TPR@1%, 500-1999 -> 5%, else AUC only; NotInject 339-pair CI width of a proportion difference
 # verdicts.py
-def verdict_h1a(results) -> Verdict; verdict_h1b; verdict_h2; verdict_h3   # statuses: подтверждена / опровергнута / не хватило данных / предусловие не выполнено, with effect and CI
+def verdict_h1a(results, cfg=None, power=None) -> Verdict; verdicts_h1b(results, cfg, power) -> {real_fly, flyhash}; verdict_h2; verdict_h3(results, cfg, power)   # the E0 gate is mandatory: pass power=<results/power.json dict> (or a carrier flag per row), otherwise ValueError; statuses: подтверждена / опровергнута / не хватило данных / предусловие не выполнено, with effect and CI
+# tau_fpr_record(neg_pool_scores, fpr=None, source='P_val', cfg=None, *, n_test_pool=None): the 1 %/5 %/AUC-only target follows |P_test| (or power.json fpr_target), never |P_val|
+# doc_scores(window_scores, windows, strict=True): raises when a non-excluded window has no score
 ```
 CI type: `{"point": float, "low": float, "high": float, "level": 0.95, "n_boot": int, "n": int}`.
 

@@ -61,7 +61,7 @@ splits:
   contract: {hash: crc32, mod: 3, rem: 2, test_attack: important_instructions, val_fraction: 0.2,
              agentdyn_clean_non_test: validation}   # contract §6: all clean non-test AgentDyn runs feed threshold validation
   bipia: {val_fraction: 0.2, e6_one_string_per_name: true}
-pools: {target_min_docs: 2000}
+pools: {target_min_docs: 2000, p_val_deepset: val}   # val = benign deepset validation part only (DEVIATIONS D8); train = ТЗ 1.8 literal
 paraphrase:
   bases: {agentdojo_templates: [important_instructions, tool_knowledge, injecagent, ignore_previous],
           deepset_test_injections: true, deepset_test_benign: true}
