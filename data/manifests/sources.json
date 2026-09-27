@@ -334,8 +334,10 @@
  "pins": {
   "agentdojo": {
    "benchmark_version": "v1.2.2",
+   "commit": "a75aba7631d3ca5fb7ab938965c97ead2f9ff84b",
    "package": "0.1.35",
-   "repo": "https://github.com/ethz-spylab/agentdojo"
+   "repo": "https://github.com/ethz-spylab/agentdojo",
+   "tag": "v0.1.35"
   },
   "agentdyn": {
    "benchmark_version": "v1.2.2",
@@ -351,5 +353,6 @@
    "minconf": 0.5,
    "version": "v1.0"
   }
- }
+ },
+ "pins_written": "2026-09-27T03:40:07Z"
 }
