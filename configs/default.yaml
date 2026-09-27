@@ -104,4 +104,15 @@ extraction:
   decode_yaml_quoted_scalars: true     # second span-matching pass on YAML-quoted tool outputs (DEVIATIONS D7)
   harm_matching:
     target_args: [recipient, recipients, cc, bcc, participants, url, repo_name, product_ids, title, password, save_dir, destination_path, source_path, hotel, channel, user, email, filename, file_id]
-smoke: {seeds: 1, n_null: 20, docs_per_source: 200, bootstrap: 100, episodes: 20, paraphrase_bases: 10, power: {n_rep: 5, n_boot: 100}}
+smoke:   # ТЗ: steps 2-13 on 1 seed, 20 shuffles, 200 docs/source, 100 bootstrap draws, 20 episodes, 10 paraphrase bases (ASSUMPTIONS A54)
+  seeds: 1
+  n_null: 20
+  docs_per_source: 200
+  bootstrap: 100
+  episodes: 20
+  paraphrase_bases: 10
+  power: {n_rep: 5, n_boot: 100}
+  subsamples_per_point: 3              # E2: 3 subsamples per shot level instead of 10
+  e6_parts: [k, gamma, weighted, normalized, tau80, para_shallow]   # guard-heavy parts (bipia_all, tok512, flyhash40) only in the real run
+  guard_latency: false                 # no uncached transformer forward passes for latency in smoke
+  contamination_audit: false           # the counts-only audit of the full build is not repeated on the smoke subset
