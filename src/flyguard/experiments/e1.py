@@ -17,6 +17,17 @@ reference detector's point estimate on that metric; extras ``delta``, ``referenc
 ``outside_corridor``) for every pair with a ``diff90``, and ``p_holm/auc/<source>/protectai_v2-tfidf_lr`` -- the
 Holm-adjusted bootstrap p-values over the present semantic sources of H1a (``para_deep``, ``bipia``, ``dyn``).
 
+ROC curves (ТЗ Этап 6 "Графики: ROC по источникам"; ТЗ 3.1 "точка на ROC" for the regexes). The report may read
+only ``results/*.json``, and the document scores are never written, so E1 stores the curves themselves: the table
+``roc`` has one row ``{source, detector, fpr, tpr}`` per point of a fixed FPR grid (:data:`ROC_FPR_GRID`, dense at
+low FPR; ``roc_fpr_grid`` in ``E1.yaml`` overrides it) for every ``auc/<source>/<detector>`` number. ``tpr`` is the
+empirical ROC read at that FPR: vertices at every distinct score (alarm when ``score >= tau``, the package rule),
+joined by straight lines, so tied scores give the diagonal segment and the area under the vertices is the
+Mann-Whitney AUC of ``auc/<source>/<detector>``; at an FPR with a vertical jump the upper end is taken. A common grid
+lets the report average the curves of the ten seeds vertically. The table ``roc_points`` holds the exact operating
+point(s) ``{source, detector, fpr, tpr, threshold}`` of every detector whose document scores on that source take at
+most two distinct values (the regexes), which the figure draws as points.
+
 Guards are timed (``latency_ms/protectai_v2`` ...) only for the first seed of a run by default (``latency_guards=
 "auto"``): a forward pass over 200 documents does not depend on the seed and is the most expensive step of E1.
 """
@@ -26,6 +37,9 @@ import math
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+import numpy as np
+import pandas as pd
+
 from flyguard.config import ROOT, Configs, load_configs
 from flyguard.eval.tost import equivalence_margin, holm, tost
 from flyguard.experiments import results as results_mod
@@ -33,6 +47,72 @@ from flyguard.experiments.context import Context
 from flyguard.experiments.engine import FeatureContext, ResultBuilder, Runner, standard_evaluation
 
 SEMANTIC_SOURCES = ("para_deep", "bipia", "dyn")
+# FPR grid of the stored ROC curves: fine where the operating points live (FPR 1 % / 5 %), 0.05 steps above 0.1.
+ROC_FPR_GRID: tuple[float, ...] = ((0.0, 0.001, 0.002, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.075)
+                                   + tuple(round(0.1 + 0.05 * i, 2) for i in range(19)))
+ROC_POINT_MAX_DISTINCT = 2   # a detector with at most this many distinct document scores is a point on the ROC
+ROC_TOL = 1e-12              # FPR equality tolerance (k / n_neg against a decimal grid value)
+
+
+def roc_vertices(scores: Sequence[float] | np.ndarray, labels: Sequence[int] | np.ndarray
+                 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Empirical ROC vertices ``(fpr, tpr, thresholds)`` starting at (0, 0): one vertex per distinct score, alarm
+    when ``score >= threshold`` (``thresholds[0] = +inf``). Non-finite scores are dropped. Raises ``ValueError``
+    when a class is absent (no ROC, as there is no AUC)."""
+    s = np.asarray(scores, dtype=float)
+    y = np.asarray(labels).astype(int)
+    keep = np.isfinite(s)
+    s, y = s[keep], y[keep]
+    n_pos = int((y == 1).sum())
+    n_neg = int(y.size - n_pos)
+    if n_pos == 0 or n_neg == 0:
+        raise ValueError("ROC needs both classes")
+    order = np.argsort(-s, kind="mergesort")
+    s_sorted, y_sorted = s[order], y[order]
+    last = np.r_[np.flatnonzero(np.diff(s_sorted)), s_sorted.size - 1]   # last index of every distinct score
+    tps = np.cumsum(y_sorted)[last].astype(float)
+    fps = (last + 1).astype(float) - tps
+    return (np.r_[0.0, fps / n_neg], np.r_[0.0, tps / n_pos], np.r_[np.inf, s_sorted[last]])
+
+
+def roc_at(fpr: np.ndarray, tpr: np.ndarray, grid: Sequence[float]) -> np.ndarray:
+    """TPR of the piecewise-linear ROC through the vertices at every FPR of ``grid``; at an FPR with a vertical
+    jump (several vertices, same FPR) the upper end, i.e. the best TPR reachable at that FPR."""
+    g = np.clip(np.asarray(grid, dtype=float), 0.0, 1.0)
+    j = np.clip(np.searchsorted(fpr, g + ROC_TOL, side="right") - 1, 0, fpr.size - 1)   # last vertex with fpr <= g
+    nxt = np.minimum(j + 1, fpr.size - 1)
+    span = fpr[nxt] - fpr[j]
+    frac = np.clip((g - fpr[j]) / np.where(span > 0, span, 1.0), 0.0, 1.0)
+    out = np.where(np.abs(fpr[j] - g) <= ROC_TOL, tpr[j], tpr[j] + frac * (tpr[nxt] - tpr[j]))
+    return np.clip(out, 0.0, 1.0)
+
+
+def roc_tables(doc_tables: Mapping[str, pd.DataFrame], detectors: Sequence[str],
+               grid: Sequence[float] = ROC_FPR_GRID) -> dict[str, list[dict[str, Any]]]:
+    """The ``roc`` and ``roc_points`` tables (module docstring) for the same (source, detector) cells as the
+    ``auc/<source>/<detector>`` numbers of :func:`flyguard.experiments.engine.standard_evaluation`: NotInject and
+    single-class sources are skipped, ``para_deep`` is included."""
+    grid = sorted({float(x) for x in grid} | {0.0, 1.0})
+    roc: list[dict[str, Any]] = []
+    points: list[dict[str, Any]] = []
+    for src, df in doc_tables.items():
+        if src == "notinject" or df["label"].nunique() < 2:
+            continue
+        for det in detectors:
+            if det not in df.columns:
+                continue
+            scores = df[det].to_numpy(dtype=float)
+            try:
+                fpr, tpr, thr = roc_vertices(scores, df["label"].to_numpy())
+            except ValueError:
+                continue
+            roc.extend({"source": src, "detector": det, "fpr": float(f), "tpr": float(t)}
+                       for f, t in zip(grid, roc_at(fpr, tpr, grid)))
+            if thr.size - 1 <= ROC_POINT_MAX_DISTINCT:
+                points.extend({"source": src, "detector": det, "fpr": float(fpr[i]), "tpr": float(tpr[i]),
+                               "threshold": float(thr[i])}
+                              for i in range(1, thr.size) if not (fpr[i] == 1.0 and tpr[i] == 1.0))
+    return {"roc": roc, "roc_points": points}
 
 
 def hypothesis_inputs(numbers: Mapping[str, Mapping[str, Any]], cfg: Configs,
@@ -98,6 +178,9 @@ def e1_body(fc: FeatureContext, rb: ResultBuilder, latency_guards: bool = False)
     for key, rec in hypothesis_inputs(out["numbers"], cfg,
                                       comparator=str(cfg.default["baselines"]["transformers"]["comparator"])).items():
         rb.numbers[results_mod.check_key(key)] = rec
+    grid = e1.get("roc_fpr_grid") or ROC_FPR_GRID
+    for name, rows in roc_tables(out["doc_tables"], [n for n, f in fitted.items() if f.available], grid).items():
+        rb.add_table(name, rows)
     available = [n for n, f in fitted.items() if f.available]
     rb.note(f"E1: train_labels={e1.get('train_labels')}, sources={sources}, missing_sources={missing}, "
             f"detectors={names}, available={available}, latency_guards={latency_guards}")

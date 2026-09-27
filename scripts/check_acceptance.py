@@ -29,11 +29,20 @@ What each check reads and why (criterion in quotes):
   word test, never printed, and the read is journaled through ``log_data_access`` (the paraphrases are test material).
 * "spend.json ≤ budget" — ``results/spend.json`` against ``llm_api.budget_usd``.
 * "smoke.sh за 15 минут со всеми разделами" — ``logs/run_all.log``: the time of a *clean* smoke run is the sum,
-  over the stages of ТЗ steps 2–13 (``build_stage1`` … ``report``), of the most recent smoke ``done`` duration of
-  each stage (:func:`smoke_timing`); ``run_all.sh`` is idempotent, so the ``TOTAL`` of the last run (also printed)
-  understates a clean run whenever a stage was skipped as done, and an interrupted run has no ``TOTAL`` at all. A
-  stage never measured or whose latest smoke event is ``fail`` fails the criterion; the ten section headings of
-  ``results/smoke/REPORT.md`` must be present.
+  over the stages of ТЗ steps 2–13 (``build_stage1`` … ``report``, the guard ``prescore`` stage included), of the
+  most recent smoke ``done`` duration of each stage (:func:`smoke_timing`); ``run_all.sh`` is idempotent, so the
+  ``TOTAL`` of the last run (also printed) understates a clean run whenever a stage was skipped as done, and an
+  interrupted run has no ``TOTAL`` at all. A stage never measured or whose latest smoke event is ``fail`` fails the
+  criterion. A clean machine has no guard scores: the measured ``prescore`` must have started from an empty score
+  cache (``scores_cache_rows=0`` in its ``start`` line; a warm cache makes the guard stages look fast). The ten
+  section headings of ``results/smoke/REPORT.md`` must be present.
+* "все сиды" — every experiment E1–E6 that has seed files has exactly the configured seeds (``seeds.global``; smoke:
+  the first ``smoke.seeds``): a seed process that failed under ``run_all.sh --jobs`` leaves a partial set, and the
+  summaries would silently average fewer seeds. An experiment with no file at all is listed (ТЗ cutting order).
+* "результаты посчитаны одним кодом" — the ``git_commit`` of every results file (seed files, ``power.json``,
+  ``contract.json``, ``verdicts.json``): distinct commits must not differ in ``src``, ``scripts`` or ``configs``
+  (``git diff --quiet``; a commit that touches only journals or docs is the same code), and no file may carry
+  ``git_dirty: true`` (a file without the flag is reported, not failed). ``config_hash`` alone does not see code.
 * "pytest проходит" — the suite is run here (``--pytest run``, default) or its last log is read.
 * "Манифесты полны; тест не пересекается с обучением; ни один кластер не содержит обе метки; пары BIPIA целы" —
   manifests present; from the parquet tables (id, split, label, cluster, hash and meta columns only, journaled as a
@@ -157,9 +166,15 @@ def parse_access_log(lines: Iterable[str]) -> list[dict[str, Any]]:
     return out
 
 
-SMOKE_STAGES = ("build_stage1", "e0_stage1", "build_full", "e0_stage2", "e1", "e4", "e5", "e3", "e2", "e6",
+SMOKE_STAGES = ("build_stage1", "e0_stage1", "build_full", "e0_stage2", "prescore", "e1", "e4", "e5", "e3", "e2", "e6",
                 "contract", "verdicts", "report")
-"""``run_all.sh`` stages of ТЗ "Бюджет времени" steps 2–13 (the ``check`` stage is this script and is not a step)."""
+"""``run_all.sh`` stages of ТЗ "Бюджет времени" steps 2–13, in run order (the ``check`` stage is this script and is
+not a step). ``prescore`` is the guard scoring of steps 5/7 moved ahead of the seeds: once it has filled the cache,
+E1/E6/contract only read it, so leaving it out would drop the most expensive work of the smoke from the sum."""
+CACHE_NOTE_RE = re.compile(r"scores_cache_rows=(\d+|unknown)")
+CODE_PATHS = ("src", "scripts", "configs")
+"""Paths whose content decides the numbers of a results file (``git diff`` between the commits of two files)."""
+SEED_EXPERIMENTS = ("E1", "E2", "E3", "E4", "E5", "E6")
 
 
 def smoke_timing(lines: Iterable[str]) -> dict[str, Any]:
@@ -168,11 +183,14 @@ def smoke_timing(lines: Iterable[str]) -> dict[str, Any]:
 
     Returns ``{"last_total": (ts, seconds, note) | None, "stages": {stage: (ts, seconds)} (the most recent smoke
     ``done`` of each stage), "sum": seconds over the measured stages, "missing": stages never measured, "failed":
-    stages whose most recent smoke event is ``fail``}``. Skipped (``skip``) and interrupted (``start`` without
-    ``done``) events measure nothing; only ``mode == smoke`` lines are read.
+    stages whose most recent smoke event is ``fail``, "prescore_cache_rows": rows of the guard score cache when the
+    measured ``prescore`` started (``None``: not recorded or unknown)}``. Skipped (``skip``) and interrupted
+    (``start`` without ``done``) events measure nothing; only ``mode == smoke`` lines are read.
     """
     stages: dict[str, tuple[str, float]] = {}
     latest: dict[str, str] = {}
+    start_note: dict[str, str] = {}
+    cache_rows: int | None = None
     last_total = None
     last_start = None          # the most recent smoke "RUN start": a run whose TOTAL is not written yet is unfinished
     for line in lines:
@@ -189,14 +207,93 @@ def smoke_timing(lines: Iterable[str]) -> dict[str, Any]:
         elif stage == "RUN" and status == "start":
             last_start = ts
         elif stage in SMOKE_STAGES:
+            if status == "start":
+                start_note[stage] = note
             if status in ("done", "fail"):
                 latest[stage] = status
             if status == "done":
                 stages[stage] = (ts, seconds)
+                if stage == "prescore":
+                    m = CACHE_NOTE_RE.search(start_note.get(stage, ""))
+                    cache_rows = int(m.group(1)) if m and m.group(1).isdigit() else None
     return {"last_total": last_total, "last_start": last_start, "stages": stages,
             "sum": float(sum(v[1] for v in stages.values())),
             "missing": [s for s in SMOKE_STAGES if s not in stages],
-            "failed": [s for s in SMOKE_STAGES if latest.get(s) == "fail"]}
+            "failed": [s for s in SMOKE_STAGES if latest.get(s) == "fail"],
+            "prescore_cache_rows": cache_rows}
+
+
+def seed_coverage(seed_files: dict[str, dict[str, Any]], expected: Sequence[int],
+                  experiments: Sequence[str] = SEED_EXPERIMENTS, required: Sequence[str] = ("E1", "E4")) -> Check:
+    """Every experiment with seed files has exactly the ``expected`` seeds (keys are ``.../<E>/<seed>.json`` paths):
+    a missing seed (a failed or killed seed process) or an extra one (a run with other ``--seeds``) makes the summary
+    average another seed set than the configured one. Experiments without files are listed; only ``required`` ones
+    fail then (ТЗ cutting order: E6, E2, E3, E5 may be cut first, E1 and E4 carry H1/H3)."""
+    want = sorted({int(s) for s in expected})
+    have: dict[str, set[int]] = {e: set() for e in experiments}
+    for name in seed_files:
+        p = Path(name)
+        if p.parent.name in have and p.stem.isdigit():
+            have[p.parent.name].add(int(p.stem))
+    bad = []
+    for e in experiments:
+        if not have[e]:
+            continue
+        missing, extra = sorted(set(want) - have[e]), sorted(have[e] - set(want))
+        if missing or extra:
+            bad.append(f"{e}: " + ", ".join(x for x in (f"нет сидов {missing}" if missing else "",
+                                                          f"лишние сиды {extra}" if extra else "") if x))
+    absent = [e for e in experiments if not have[e]]
+    absent_required = [e for e in absent if e in required]
+    detail = (f"ожидаются сиды {want}; " + ("; ".join(bad) if bad else "у выполненных экспериментов все сиды")
+              + (f"; не выполнены: {absent}" if absent else "")
+              + (f" (из них обязательны {absent_required})" if absent_required else ""))
+    return Check("у каждого выполненного эксперимента E1–E6 все сиды конфига",
+                 bool(want) and not bad and not absent_required, detail)
+
+
+def code_provenance(files: dict[str, dict[str, Any] | None], same_code: Callable[[str, str], bool | None],
+                    head: str | None = None) -> Check:
+    """The results files were computed by one version of the code: every file records a ``git_commit``; distinct
+    commits have the same ``src``/``scripts``/``configs`` (``same_code(a, b)``: True same, False differs, None
+    unknown commit); no file has ``git_dirty: true``. Files without the dirty flag are counted in the detail only.
+    ``head`` (the commit being checked out now) is compared for information."""
+    name = "результаты посчитаны одним кодом (коммит без незакоммиченных изменений src/scripts/configs)"
+    files = {k: v for k, v in files.items() if v is not None}
+    if not files:
+        return Check(name, False, "файлов результатов нет")
+    commits = {k: v.get("git_commit") for k, v in files.items()}
+    no_commit = sorted(k for k, c in commits.items() if not c)
+    counts: dict[str, int] = {}
+    for c in commits.values():
+        if c:
+            counts[c] = counts.get(c, 0) + 1
+    ref = max(counts, key=lambda c: (counts[c], c)) if counts else None
+    differs, unknown = [], []
+    for c in sorted(counts):
+        if c == ref:
+            continue
+        same = same_code(ref, c)
+        (differs if same is False else unknown if same is None else []).append(c[:12])
+    dirty = sorted(k for k, v in files.items() if v.get("git_dirty") is True)
+    unflagged = sum(1 for v in files.values() if "git_dirty" not in v)
+    detail = (f"файлов {len(files)}; коммиты: " + ", ".join(f"{c[:12]} ({n})" for c, n in sorted(counts.items(), key=lambda kv: -kv[1]))
+              if counts else f"файлов {len(files)}; коммиты не записаны")
+    if differs:
+        detail += f"; код (src/scripts/configs) отличается от {ref[:12]} в: {differs}"
+    if unknown:
+        detail += f"; коммиты не найдены в истории: {unknown}"
+    if no_commit:
+        detail += f"; без git_commit: {no_commit[:6]}" + (f" и ещё {len(no_commit) - 6}" if len(no_commit) > 6 else "")
+    if dirty:
+        detail += f"; с незакоммиченными изменениями кода (git_dirty): {dirty[:6]}"
+    if unflagged:
+        detail += f"; флаг git_dirty не записан в {unflagged} файлах (чистота дерева при расчёте не известна)"
+    if ref and head and head != ref:
+        same_head = same_code(ref, head)
+        detail += ("; код текущего HEAD тот же" if same_head is True
+                   else "; код текущего HEAD отличается от кода результатов" if same_head is False else "")
+    return Check(name, bool(counts) and not no_commit and not differs and not unknown and not dirty, detail)
 
 
 def regex_order(commit_time: datetime | None, dirty: bool, entries: Sequence[dict[str, Any]], journal_text: str) -> Check:
@@ -347,7 +444,8 @@ class Checker:
         for fn in (self.c_sources, self.c_network, self.c_pilot, self.c_traces, self.c_paraphrases, self.c_spend,
                    self.c_smoke, self.c_pytest, self.c_manifests, self.c_dedup, self.c_kc, self.c_power,
                    self.c_windows, self.c_thresholds, self.c_verdicts, self.c_h3, self.c_comparator,
-                   self.c_config_hash, self.c_deviations, self.c_report, self.c_contract, self.c_regex):
+                   self.c_config_hash, self.c_seeds, self.c_provenance, self.c_deviations, self.c_report,
+                   self.c_contract, self.c_regex):
             if self.only and fn.__name__ not in self.only:
                 continue
             try:
@@ -480,7 +578,9 @@ class Checker:
         if not t["stages"]:
             self.add(self.c_smoke.__doc__, False, "в logs/run_all.log нет ни одной завершённой стадии смоука")
             return
-        ok = not t["missing"] and not t["failed"] and t["sum"] <= SMOKE_LIMIT_S and sections == 10
+        rows = t["prescore_cache_rows"]
+        cold = "prescore" not in t["stages"] or rows == 0      # a missing prescore already fails as "не измерены"
+        ok = not t["missing"] and not t["failed"] and t["sum"] <= SMOKE_LIMIT_S and sections == 10 and cold
         newest = max(ts for ts, _ in t["stages"].values())
         detail = (f"чистый прогон по сумме последних измерений стадий {t['sum']:.0f} с (предел {SMOKE_LIMIT_S} с; "
                   f"последнее измерение {newest}): "
@@ -495,6 +595,14 @@ class Checker:
             detail += f"; не измерены: {t['missing']}"
         if t["failed"]:
             detail += f"; упали: {t['failed']}"
+        if "prescore" in t["stages"]:
+            cdir = str(self.cfg.default["baselines"]["transformers"]["cache_dir"])
+            detail += ("; prescore измерен с пустого кеша оценок" if rows == 0 else
+                       f"; prescore измерен при {rows} строках в кеше оценок {cdir}: это не чистая машина" if rows else
+                       f"; состояние кеша оценок {cdir} при замере prescore не записано (прогон до этой проверки)")
+            if not cold:
+                detail += (f" — чистый смоук не измерен: перенесите {cdir} в сторону и повторите scripts/smoke.sh "
+                           f"(признак — число строк кеша, консервативно: любые строки считаются тёплым кешем)")
         detail += f"; разделов в results/smoke/REPORT.md: {sections}"
         self.add(self.c_smoke.__doc__, ok, detail)
 
@@ -677,6 +785,30 @@ class Checker:
         bad = config_hash_mismatches(files, self.current)
         self.add(self.c_config_hash.__doc__, bool(files) and not bad,
                  f"файлов {len(files)}, расходятся: {bad[:6]}" if bad else f"файлов {len(files)}, хеш {self.current[:12]}…" if files else "файлов результатов нет")
+
+    def c_seeds(self) -> None:
+        """у каждого выполненного эксперимента E1–E6 все сиды конфига"""
+        seeds = [int(s) for s in self.cfg.default["seeds"]["global"]]
+        if self.smoke:
+            seeds = seeds[: int(self.cfg.default["smoke"]["seeds"])]
+        self.checks.append(seed_coverage(self.seed_files, seeds))
+
+    def _same_code(self, a: str, b: str) -> bool | None:
+        try:
+            rc = subprocess.run(["git", "diff", "--quiet", a, b, "--", *CODE_PATHS], cwd=self.root,
+                                capture_output=True).returncode
+        except FileNotFoundError:
+            return None
+        return {0: True, 1: False}.get(rc)
+
+    def c_provenance(self) -> None:
+        """результаты посчитаны одним кодом"""
+        files: dict[str, dict[str, Any] | None] = dict(self.seed_files)
+        for name in ("power.json", "contract.json", "verdicts.json"):
+            p = self.rdir / name
+            if p.exists():
+                files[str(p.relative_to(self.root))] = _json(p)
+        self.checks.append(code_provenance(files, self._same_code, git(self.root, "rev-parse", "HEAD")))
 
     def c_deviations(self) -> None:
         """DEVIATIONS.md перечисляет отклонения; каждый упомянутый D<n> существует"""

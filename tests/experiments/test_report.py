@@ -1,12 +1,15 @@
 """scripts/make_report.py and scripts/check_acceptance.py on a synthetic results tree (ТЗ "Критерии приёмки":
 каждое число REPORT.md прослеживается до results/; the report renders with missing experiments; the acceptance
-helpers flip on the right inputs). Deterministic, synthetic, no network, no real data."""
+helpers flip on the right inputs), and the scripts/run_all.sh driver on a fake root with a stub interpreter (a
+failing command inside a stage fails the stage). Deterministic, synthetic, no network, no real data."""
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -249,6 +252,10 @@ def test_every_number_is_found_in_the_referenced_json(report_root):
     assert f"{rec['mean']:.3f} [{rec['seed_ci_low']:.3f}, {rec['seed_ci_high']:.3f}] (results/E1/summary.json#numbers/macro_auc/tfidf_lr)" in text
     figs = {p.name for p in (report_root / "results/figures").glob("*.png")}
     assert {"e1_auc_by_source.png", "e2_learning_curves.png", "e4_curveball_hist.png", "e1_notinject_fpr_tau90.png", "para_strata_auc.png"} <= figs
+    # section 2 lists the commits the results were computed on, apart from the commit the report is rendered on
+    assert "**Коммиты, на которых посчитаны результаты**" in text
+    assert "(results/E1/summary.json#git_commits) | 0, 1 |" in text and "(results/verdicts.json#git_commit)" in text
+    assert "Коммит, на котором собран отчёт:" in text
 
 
 def test_report_renders_without_any_experiment(tmp_path):
@@ -318,12 +325,146 @@ def test_smoke_timing_sums_the_latest_measured_stage_durations():
     t = ca.smoke_timing(log)
     assert t["stages"]["build_stage1"] == ("t1", 160.0) and t["stages"]["e1"] == ("t7", 200.0)
     assert t["sum"] == 160 + 30 + 150 + 35 + 200 and t["failed"] == ["e4"]
-    assert t["missing"] == ["e4", "e5", "e3", "e2", "e6", "contract", "verdicts", "report"]
-    assert t["last_total"] == ("t9", 260.0, "failed at e4")
+    assert t["missing"] == ["prescore", "e4", "e5", "e3", "e2", "e6", "contract", "verdicts", "report"]
+    assert t["last_total"] == ("t9", 260.0, "failed at e4") and t["prescore_cache_rows"] is None
+    # the guard prescoring is inside the smoke range (ТЗ step 5): its duration counts, with the cache state of its start
+    assert ca.SMOKE_STAGES.index("prescore") == ca.SMOKE_STAGES.index("e0_stage2") + 1
+    log += [line("u0", "smoke", "prescore", "start", 0, "scores_cache_rows=1190"), line("u0", "smoke", "prescore", "done", 512)]
     log += [line("u1", "smoke", s, "done", 20) for s in ("e4", "e5", "e3", "e2", "e6", "contract", "verdicts", "report")]
     t = ca.smoke_timing(log)
-    assert t["missing"] == [] and t["failed"] == [] and t["sum"] == 575 + 8 * 20 and t["stages"]["e4"] == ("u1", 20.0)
+    assert t["missing"] == [] and t["failed"] == [] and t["sum"] == 575 + 512 + 8 * 20 and t["stages"]["e4"] == ("u1", 20.0)
+    assert t["prescore_cache_rows"] == 1190
+    # the latest prescore measurement decides; "unknown" and a start without a note are not a clean measurement
+    t = ca.smoke_timing(log + [line("v0", "smoke", "prescore", "start", 0, "scores_cache_rows=0"), line("v1", "smoke", "prescore", "done", 700)])
+    assert t["prescore_cache_rows"] == 0 and t["stages"]["prescore"] == ("v1", 700.0)
+    assert ca.smoke_timing(log + [line("v0", "smoke", "prescore", "start", 0, "scores_cache_rows=unknown"),
+                                  line("v1", "smoke", "prescore", "done", 9)])["prescore_cache_rows"] is None
+    assert ca.smoke_timing(log + [line("v0", "smoke", "prescore", "start"), line("v1", "smoke", "prescore", "done", 9)])["prescore_cache_rows"] is None
     assert ca.smoke_timing([])["stages"] == {} and ca.smoke_timing(["garbage line"])["missing"] == list(ca.SMOKE_STAGES)
+
+
+def write_smoke_log(root: Path, prescore_note: str, seconds: dict | None = None) -> None:
+    """A run_all.log with one smoke measurement of every stage and a REPORT.md with the ten section headings."""
+    secs = {s: 20 for s in ca.SMOKE_STAGES} | dict(seconds or {})
+    lines = ["2026-09-27T01:00:00Z\tsmoke\tRUN\tstart\t0\targs"]
+    for s in ca.SMOKE_STAGES:
+        lines += [f"2026-09-27T01:00:01Z\tsmoke\t{s}\tstart\t0\t{prescore_note if s == 'prescore' else ''}",
+                  f"2026-09-27T01:00:02Z\tsmoke\t{s}\tdone\t{secs[s]}\t"]
+    lines.append("2026-09-27T01:10:00Z\tsmoke\tRUN\tTOTAL\t600\tok")
+    (root / "logs").mkdir(parents=True, exist_ok=True)
+    (root / "logs/run_all.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (root / "results/smoke").mkdir(parents=True, exist_ok=True)
+    (root / "results/smoke/REPORT.md").write_text("".join(f"## {i}. x\n\n" for i in range(1, 11)), encoding="utf-8")
+
+
+def test_smoke_criterion_needs_prescore_from_an_empty_score_cache(tmp_path):
+    """A warm guard-score cache makes prescore/E1/E6 look fast: the 15-minute criterion passes only on a prescore
+    measured from an empty cache, and the prescore duration counts toward the limit."""
+    root = tmp_path / "repo"
+    shutil.copytree(ROOT / "configs", root / "configs")
+    name = "smoke.sh проходит за 15 минут со всеми разделами отчёта"
+
+    def smoke_check():
+        return next(c for c in ca.run_checks(root, smoke=True, pytest_mode="skip", only=["c_smoke"]) if c.name == name)
+
+    write_smoke_log(root, "scores_cache_rows=0")
+    c = smoke_check()
+    assert c.ok is True and "prescore 20" in c.detail and "пустого кеша" in c.detail, c.detail
+    write_smoke_log(root, "scores_cache_rows=5377")
+    c = smoke_check()
+    assert c.ok is False and "5377" in c.detail and "перенесите" in c.detail
+    write_smoke_log(root, "")                                        # a log written before the note existed
+    assert smoke_check().ok is False
+    write_smoke_log(root, "scores_cache_rows=0", {"prescore": 900 - 20 * (len(ca.SMOKE_STAGES) - 1) + 1})
+    c = smoke_check()
+    assert c.ok is False and "901" in c.detail                        # over the limit only because of prescore
+
+
+def test_seed_coverage_and_code_provenance_helpers():
+    files = {f"results/{e}/{s}.json": {} for e in ("E1", "E4") for s in (0, 1, 2)}
+    assert ca.seed_coverage(files, [0, 1, 2]).ok is True
+    c = ca.seed_coverage({k: v for k, v in files.items() if k != "results/E1/1.json"}, [0, 1, 2])
+    assert c.ok is False and "E1: нет сидов [1]" in c.detail                  # a failed or killed seed process
+    c = ca.seed_coverage({**files, "results/E4/7.json": {}}, [0, 1, 2])
+    assert c.ok is False and "лишние сиды [7]" in c.detail
+    c = ca.seed_coverage({k: v for k, v in files.items() if "/E4/" not in k}, [0, 1, 2])
+    assert c.ok is False and "E4" in c.detail                                 # E4 is never cut (ТЗ cutting order)
+    c = ca.seed_coverage({**files, "results/smoke/E6/0.json": {}}, [0, 1, 2])
+    assert c.ok is False and "E6: нет сидов [1, 2]" in c.detail
+    assert ca.seed_coverage(files, [0, 1, 2], required=()).ok and "не выполнены: ['E2', 'E3', 'E5', 'E6']" in ca.seed_coverage(files, [0, 1, 2]).detail
+
+    a, b, x = "a" * 40, "b" * 40, "c" * 40
+    same = {frozenset((a, b)): True, frozenset((a, x)): False}
+    diff = lambda p, q: same.get(frozenset((p, q)))  # noqa: E731 - None: commit unknown to git
+    rec = lambda c, **kw: {"git_commit": c, "git_dirty": False, **kw}  # noqa: E731
+    assert ca.code_provenance({"r/E1/0.json": rec(a), "r/E1/1.json": rec(a)}, diff).ok is True
+    assert ca.code_provenance({"r/E1/0.json": rec(a), "r/E1/1.json": rec(a), "r/E4/0.json": rec(b)}, diff).ok is True   # docs-only commit
+    c = ca.code_provenance({"r/E1/0.json": rec(a), "r/E1/1.json": rec(a), "r/E1/2.json": rec(x)}, diff)
+    assert c.ok is False and x[:12] in c.detail and "отличается" in c.detail
+    c = ca.code_provenance({"r/E1/0.json": rec(a), "r/E1/1.json": rec(a), "r/E1/2.json": rec("d" * 40)}, diff)
+    assert c.ok is False and "не найдены" in c.detail
+    assert ca.code_provenance({"r/E1/0.json": rec(a), "r/E1/1.json": rec(a, git_dirty=True)}, diff).ok is False
+    assert ca.code_provenance({"r/E1/0.json": rec(a), "r/E1/1.json": rec(None)}, diff).ok is False
+    c = ca.code_provenance({"r/E1/0.json": {"git_commit": a}}, diff, head=x)
+    assert c.ok is True and "git_dirty не записан в 1" in c.detail and "HEAD отличается" in c.detail
+    assert ca.code_provenance({}, diff).ok is False and ca.code_provenance({"r": None}, diff).ok is False
+
+
+STUB_PY = r"""#!/usr/bin/env bash
+# stub interpreter for the run_all.sh driver test: records calls, fails where STUB_FAIL says
+echo "$*" | cut -c1-120 >> "$STUB_LOG"
+case "$1" in
+  -) body="$(cat)"
+     if [[ "$body" == *read_metadata* ]]; then echo "${STUB_ROWS:-0}"
+     elif [[ "$body" == *'seeds = list'* ]]; then echo "0,1,2"
+     else echo todo; fi ;;
+  -c) [[ "$*" == *summarize* ]] && echo "summarize $3" >> "$STUB_LOG"; echo "" ;;
+  -m) if [[ "$2" == flyguard.experiments.run && " $STUB_FAIL " == *" seed$5 "* ]]; then exit 7; fi ;;
+esac
+exit 0
+"""
+
+
+@pytest.mark.skipif(shutil.which("bash") is None or shutil.which("xargs") is None, reason="needs bash and xargs")
+def test_run_all_driver_fails_the_stage_on_a_failing_command(tmp_path):
+    """Stages run as `( ... )` in an || list ignore errexit (bash rule), so a failing seed process of --jobs or a
+    failed `gen_traces.sh run` used to be followed by summarize/freeze and the stage logged "done". The driver now
+    re-arms errexit inside every stage body and run_experiment returns the xargs status after the summary."""
+    root = tmp_path / "fake"
+    (root / "scripts").mkdir(parents=True)
+    (root / ".venv/bin").mkdir(parents=True)
+    shutil.copy(SCRIPTS / "run_all.sh", root / "scripts/run_all.sh")
+    py = root / ".venv/bin/python"
+    py.write_text(STUB_PY, encoding="utf-8")
+    py.chmod(0o755)
+    gen = root / "scripts/gen_traces.sh"
+    gen.write_text('#!/usr/bin/env bash\necho "gen_traces $1" >> "$STUB_LOG"\n[[ "$1" == run ]] && exit 5\nexit 0\n', encoding="utf-8")
+    gen.chmod(0o755)
+    (root / "data/processed/smoke").mkdir(parents=True)
+    (root / "data/processed/smoke/windows.parquet").write_bytes(b"x")   # run_prescore hashes it into its done marker
+    stub_log = tmp_path / "stub.log"
+
+    def run(*args, fail="", rows="0", out=False):
+        stub_log.write_text("", encoding="utf-8")
+        env = {**os.environ, "STUB_LOG": str(stub_log), "STUB_FAIL": fail, "STUB_ROWS": rows}
+        proc = subprocess.run(["bash", str(root / "scripts/run_all.sh"), *args], cwd=root, env=env,
+                              capture_output=True, text=True, timeout=120)
+        if out:
+            return proc.stdout
+        return proc.returncode, stub_log.read_text(encoding="utf-8"), (root / "logs/run_all.log").read_text(encoding="utf-8")
+
+    rc, calls, log = run("--only", "e1", "--seeds", "0,1,2", "--jobs", "2", fail="seed1")
+    assert rc == 123 and "summarize E1" in calls                    # the summary of the finished seeds is rebuilt
+    assert "\te1\tfail\t" in log and "\te1\tdone\t" not in log
+    rc, calls, log = run("--only", "e1", "--seeds", "0,1,2", "--jobs", "2")
+    assert rc == 0 and log.rstrip().splitlines()[-2].split("\t")[2:4] == ["e1", "done"]
+    rc, calls, log = run("--only", "gen_traces")
+    assert rc == 5 and "gen_traces run" in calls and "gen_traces freeze" not in calls
+    rc, calls, log = run("--smoke", "--only", "prescore")                # the cache state is noted at the start
+    assert rc == 0 and "\tprescore\tstart\t0\tscores_cache_rows=0" in log
+    # the done marker matches windows.parquet; a cache moved aside (0 rows) makes prescore run again
+    assert "would run prescore" in run("--smoke", "--dry-run", "--from", "prescore", out=True)
+    assert "skip prescore (done)" in run("--smoke", "--dry-run", "--from", "prescore", rows="42", out=True)
 
 
 def test_acceptance_checklist_on_synthetic_root(report_root, recorder):
@@ -342,4 +483,6 @@ def test_acceptance_checklist_on_synthetic_root(report_root, recorder):
     assert by["pytest проходит"].ok is None
     assert by["smoke.sh проходит за 15 минут со всеми разделами отчёта"].ok is False      # no run_all.log in the toy tree
     assert by["regex_patterns.txt закоммичен до первого чтения теста"].ok is False          # no git history in the toy tree
+    assert by["у каждого выполненного эксперимента E1–E6 все сиды конфига"].ok is False     # seeds 0, 1 of seeds.global
+    assert by["результаты посчитаны одним кодом (коммит без незакоммиченных изменений src/scripts/configs)"].ok is False  # no git
     assert {c.mark for c in checks} <= {"✅", "❌", "⚠"} and len(checks) >= 20

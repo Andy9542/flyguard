@@ -10,7 +10,12 @@ the contract scores every window of a step, ASSUMPTIONS A35) and, unless ``--no-
 the documents E6 re-windows (E1 test documents of every source, P_val documents, BIPIA E6 variants). No metric is
 computed and nothing is printed but counts; the test read is journaled once per file (split ``test``).
 
-    python -m flyguard.experiments.prescore --model protectai_v2 [--smoke] [--no-tok512]
+Resumable: the texts are scored in chunks of ``--chunk`` (default 1 000) and ``GuardModel.score`` appends each
+chunk's scores to the locked cache when the chunk ends, so an interrupted run loses at most one chunk per model and a
+restart scores only the hashes still missing (``score`` skips cached hashes). One progress line per chunk goes to
+stderr (counts only).
+
+    python -m flyguard.experiments.prescore --model protectai_v2 [--smoke] [--no-tok512] [--chunk 1000]
 """
 from __future__ import annotations
 
@@ -27,12 +32,27 @@ from flyguard.data.build import output_dirs
 from flyguard.netlog import log_data_access
 
 
+CHUNK = 1000
+
+
+def _chunks(n: int, size: int):
+    for start in range(0, n, size):
+        yield start, min(n, start + size)
+
+
+def _progress(model: str, stage: str, done: int, total: int, t0: float) -> None:
+    print(json.dumps({"model": model, "stage": stage, "done": done, "total": total,
+                      "seconds": round(time.time() - t0, 1)}), file=sys.stderr, flush=True)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--model", required=True)
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--no-tok512", action="store_true")
+    ap.add_argument("--chunk", type=int, default=CHUNK, help="texts per cache append (resume granularity)")
     args = ap.parse_args(argv)
+    size = max(1, int(args.chunk))
     cfg = load_configs()
     gm = GuardModel(args.model, cfg)
     if not gm.available:
@@ -44,7 +64,10 @@ def main(argv=None) -> int:
     log_data_access(wpath, "test", purpose)
     windows = pd.read_parquet(wpath, columns=["text", "text_hash"]).drop_duplicates("text_hash")
     t0 = time.time()
-    gm.score(windows["text"].astype(str).tolist(), hashes=windows["text_hash"].astype(str).tolist())
+    texts, hashes = windows["text"].astype(str).tolist(), windows["text_hash"].astype(str).tolist()
+    for a, b in _chunks(len(texts), size):
+        gm.score(texts[a:b], hashes=hashes[a:b])
+        _progress(args.model, "windows", b, len(texts), t0)
     out = {"model": args.model, "windows_unique": int(len(windows)), "windows_seconds": round(time.time() - t0, 1)}
     if not args.no_tok512:
         splits = json.loads((manifests / "splits.json").read_text())
@@ -56,7 +79,10 @@ def main(argv=None) -> int:
         docs = pd.read_parquet(dpath, columns=["doc_id", "text"])
         docs = docs[docs["doc_id"].isin(ids)].drop_duplicates("text")
         t1 = time.time()
-        gm.score_long(docs["text"].astype(str).tolist())
+        dtexts = docs["text"].astype(str).tolist()
+        for a, b in _chunks(len(dtexts), size):
+            gm.score_long(dtexts[a:b])
+            _progress(args.model, "tok512", b, len(dtexts), t1)
         out.update({"tok512_documents_unique": int(len(docs)), "tok512_seconds": round(time.time() - t1, 1)})
     print(json.dumps(out))
     return 0

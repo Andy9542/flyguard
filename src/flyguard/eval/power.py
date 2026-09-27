@@ -19,7 +19,8 @@ is read from ``stats.power`` of configs/default.yaml, the bootstrap size from ``
 Outputs: ``power_table`` -> the dict written to ``results/power.json`` with the table "источник × метрика -> несёт /
 только 5% / только AUC / не хватило данных", the MDD of an AUC difference and the TOST power per source and for
 macroAUC at AUC ∈ {0.75, 0.85, 0.95}, the NotInject 339-pair interval width for H2 and the empirical spread hooks
-(20 curveball nulls, 10 π seeds on validation).
+(20 curveball nulls, 10 π seeds on validation). The H3 carrier status folds both spreads into the TOST power of the
+macroAUC cell (the two-stage design of the H3 interval, see :func:`h3_extra_variance`); H1b keeps the plain cell.
 """
 from __future__ import annotations
 
@@ -190,7 +191,7 @@ def power_cell(sizes: Mapping[str, Mapping[str, Any]], auc_ref: float, delta_rel
                n_boot: int | None = None, alpha: float | None = None, power_target: float | None = None,
                delta_grid: Sequence[float] | None = None, seed: int = 0, icc: float | None = None,
                corr: float | None = None, tost_level: float | None = None,
-               cfg: Configs | None = None) -> dict[str, Any]:
+               cfg: Configs | None = None, extra_sd: float | None = None) -> dict[str, Any]:
     """MDD and TOST power for one cell (a source, or macroAUC over several sources) at reference AUC ``auc_ref``.
 
     ``sizes[s] = {"n_pos", "n_neg", "cluster_label_sizes" | "cluster_sizes"}``. For each true difference in
@@ -202,6 +203,13 @@ def power_cell(sizes: Mapping[str, Mapping[str, Any]], auc_ref: float, delta_rel
     normal-approximation MDD (z_{1−α/2} + z_power)·se and TOST power 2Φ(δ/se − z_{0.95}) − 1 as a cross-check of the
     simulation. ``None`` arguments come from :func:`power_params` (configs/default.yaml). Sources are simulated in
     sorted order from one stream, so the result does not depend on the order of ``sizes``.
+
+    ``extra_sd`` (H3 only) adds ``two_stage``: the TOST power when the difference carries a further independent
+    component of sd ``extra_sd`` besides the cluster level (the null-matrix and π levels of the H3 two-stage
+    bootstrap, :func:`h3_extra_variance`). The same Δ = 0 replicates are reused: each replicate's realised
+    component e ~ N(0, extra_sd²) shifts its point and every bootstrap draw gets its own N(0, extra_sd²), as the
+    two-stage bootstrap resamples those levels around their realised mean. The noise comes from a separate stream,
+    so every other number of the cell is the same with or without ``extra_sd``.
     """
     p = power_params(cfg, n_rep=n_rep, n_boot=n_boot, alpha=alpha, power_target=power_target, delta_grid=delta_grid,
                      icc=icc, corr=corr, tost_level=tost_level)
@@ -239,6 +247,23 @@ def power_cell(sizes: Mapping[str, Mapping[str, Any]], auc_ref: float, delta_rel
         lo, hi = np.nanpercentile(c.samples, [100 * (1 - tost_level) / 2, 100 * (1 + tost_level) / 2])
         tost_hits.append(-delta <= lo and hi <= delta)
     tost_power = float(np.mean(tost_hits))
+    two_stage = None
+    if extra_sd is not None:
+        extra = float(extra_sd)
+        rng_e = np.random.default_rng(np.random.SeedSequence([int(seed), 0xE3]))
+        hits_e = []
+        for c in zero:
+            draws = np.asarray(c.samples, dtype=float)
+            draws = draws + rng_e.normal(0.0, extra) + rng_e.normal(0.0, extra, draws.size)
+            lo, hi = np.nanpercentile(draws, [100 * (1 - tost_level) / 2, 100 * (1 + tost_level) / 2])
+            hits_e.append(-delta <= lo and hi <= delta)
+        tp_e = float(np.mean(hits_e))
+        se_e = math.sqrt(se ** 2 + extra ** 2)
+        z_te = norm.ppf(0.5 + tost_level / 2)
+        two_stage = {"extra_sd": extra, "se_diff": se_e, "tost_power": tp_e,
+                     "tost_power_normal_approx": float(max(0.0, 2 * norm.cdf(delta / se_e - z_te) - 1))
+                     if se_e > 0 else 1.0,
+                     "status": CARRIES if tp_e >= power_target else INSUFFICIENT}
     curve: dict[str, float] = {}
     mdd = None
     for d in sorted(float(x) for x in delta_grid):
@@ -251,13 +276,16 @@ def power_cell(sizes: Mapping[str, Mapping[str, Any]], auc_ref: float, delta_rel
             break
     z_a, z_p = norm.ppf(1 - alpha / 2), norm.ppf(power_target)
     z_t = norm.ppf(0.5 + tost_level / 2)
-    return {
+    out = {
         "auc": float(auc_ref), "delta": float(delta), "mdd": mdd, "tost_power": tost_power, "se_diff": se,
         "mdd_normal_approx": float((z_a + z_p) * se) if se > 0 else 0.0,
         "tost_power_normal_approx": float(max(0.0, 2 * norm.cdf(delta / se - z_t) - 1)) if se > 0 else 1.0,
         "power_curve": curve, "n_rep": int(len(zero)), "n_boot": int(n_boot),
         "status": CARRIES if tost_power >= power_target else INSUFFICIENT,
     }
+    if two_stage is not None:
+        out["two_stage"] = two_stage
+    return out
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -316,6 +344,34 @@ def spread(values: Sequence[float] | np.ndarray | None, delta: float | None = No
     return out
 
 
+def h3_extra_variance(val_runs: Mapping[str, Any] | None, cfg: Configs, smoke: bool = False) -> dict[str, Any]:
+    """Variance the H3 interval carries beyond the cluster level (ТЗ Этап 0 lists both spreads under the TOST power;
+    Этап 4: "двухступенчатый бутстреп H3: кластеры × нулевые матрицы × перестановки π").
+
+    The H3 statistic is the π-average of macroAUC(measured) minus the (π, matrix)-average of the null macroAUCs, and
+    the two-stage bootstrap resamples the J null matrices and the P permutations. Their contribution to the variance
+    of the difference is sd_null² / J + sd_π² / P, with sd_null and sd_π the E0 validation spreads (curveball nulls,
+    perm seeds), J the number of nulls E4 draws (``expansion.curveball.n_null``, ``smoke.n_null`` in smoke mode) and
+    P the permutations of E4's π grid (one per global seed). Approximation: E0 measures the π spread of the measured
+    fly only, not of (measured − null mean) under the same π. A missing spread contributes nothing and is flagged in
+    ``spread_used`` (the H3 status then equals the plain cell's for that component)."""
+    val_runs = val_runs or {}
+    d = cfg.default
+    j_null = int(d["smoke"]["n_null"] if smoke else d["expansion"]["curveball"]["n_null"])
+    n_perm = int(len(d["seeds"]["global"]))
+    cb = spread(val_runs.get("curveball_val_macro_auc"))
+    pm = spread(val_runs.get("perm_val_macro_auc"))
+    comps: dict[str, float] = {}
+    if cb is not None:
+        comps["curveball"] = cb["sd"] ** 2 / j_null
+    if pm is not None:
+        comps["perm"] = pm["sd"] ** 2 / n_perm
+    return {"j_null": j_null, "n_perm": n_perm, "sd_curveball": None if cb is None else cb["sd"],
+            "sd_perm": None if pm is None else pm["sd"], "var_components": comps,
+            "extra_sd": float(math.sqrt(sum(comps.values()))),
+            "spread_used": {"curveball": cb is not None, "perm": pm is not None}}
+
+
 # ----------------------------------------------------------------------------------------------------------------
 # The E0 table
 # ----------------------------------------------------------------------------------------------------------------
@@ -368,7 +424,9 @@ def power_table(cfg: Configs | None, sizes_by_source: Mapping[str, Mapping[str, 
     ``carriers`` is the table "источник × метрика -> несёт / только 5% / только AUC / не хватило данных" the
     verdicts read: ``auc`` needs both classes (>= ``min_class_docs`` each), ``auc_diff`` needs TOST power >=
     ``power_target`` at the planning level, ``tpr_at_fpr`` follows the |P_test| rule; the ``macro`` row sums the
-    sources with both classes and carries AUC only when at least one of them does.
+    sources with both classes and carries AUC only when at least one of them does. The ``macro`` row also has
+    ``auc_diff_h3``, the same TOST power with the H3 two-stage variance of :func:`h3_extra_variance` added (the H3
+    gate and ``hypotheses.H3.macro``); ``auc_diff`` of the macro row stays the H1b gate.
     """
     cfg = cfg or load_configs()
     p = power_params(cfg, smoke=smoke, n_rep=n_rep, n_boot=n_boot, icc=icc, corr=corr, delta_grid=delta_grid,
@@ -417,6 +475,7 @@ def power_table(cfg: Configs | None, sizes_by_source: Mapping[str, Mapping[str, 
             "auc_diff": cells[s][f"{level:g}"]["status"] if enough else INSUFFICIENT,
             "tpr_at_fpr": tpr_status if enough else INSUFFICIENT,
         }
+    h3x = h3_extra_variance(val_runs, cfg, smoke=smoke)
     if auc_sources:
         macro_level = _nearest_level(levels, np.mean([val_auc[s] for s in auc_sources if s in val_auc])
                                      if any(s in val_auc for s in auc_sources) else None)
@@ -426,10 +485,13 @@ def power_table(cfg: Configs | None, sizes_by_source: Mapping[str, Mapping[str, 
             cells["macro"][f"{a:g}"] = power_cell(auc_sources, a, delta_rel, n_rep=n_rep, n_boot=n_boot,
                                                   alpha=alpha, power_target=power_target, delta_grid=delta_grid,
                                                   seed=cell_seed(seed, "macro", a), icc=icc, corr=corr,
-                                                  tost_level=tost_level, cfg=cfg)
+                                                  tost_level=tost_level, cfg=cfg, extra_sd=h3x["extra_sd"])
         any_enough = any(enough_by_source.get(s, False) for s in auc_sources)
+        plan_cell = cells["macro"][f"{macro_level:g}"]
         carriers["macro"] = {"auc": CARRIES if any_enough else INSUFFICIENT,
-                             "auc_diff": cells["macro"][f"{macro_level:g}"]["status"] if any_enough else INSUFFICIENT,
+                             "auc_diff": plan_cell["status"] if any_enough else INSUFFICIENT,
+                             "auc_diff_h3": (plan_cell.get("two_stage") or {}).get("status", INSUFFICIENT)
+                             if any_enough else INSUFFICIENT,
                              "tpr_at_fpr": tpr_status if any_enough else INSUFFICIENT}
         macro_clusters = [sizes[s]["n_clusters"] for s in auc_sources]
         sizes["macro"] = {"n_pos": int(sum(sizes[s]["n_pos"] for s in auc_sources)),
@@ -468,7 +530,13 @@ def power_table(cfg: Configs | None, sizes_by_source: Mapping[str, Mapping[str, 
         "H1b": {"macro": carriers.get("macro", {}).get("auc_diff", INSUFFICIENT),
                 "macro_cell": _cell("macro")},
         "H2": {"notinject": out["notinject"]},
-        "H3": {"macro": carriers.get("macro", {}).get("auc_diff", INSUFFICIENT), "macro_cell": _cell("macro"),
-               "spread": out["spread"]},
+        "H3": {"macro": carriers.get("macro", {}).get("auc_diff_h3", INSUFFICIENT),
+               "macro_plain": carriers.get("macro", {}).get("auc_diff", INSUFFICIENT), "macro_cell": _cell("macro"),
+               "spread": out["spread"],
+               "two_stage": {**h3x, "extra_sd_over_delta": (h3x["extra_sd"] / delta_macro) if delta_macro else None,
+                             "tost_power_plain": (_cell("macro") or {}).get("tost_power"),
+                             "tost_power": ((_cell("macro") or {}).get("two_stage") or {}).get("tost_power"),
+                             "rule": "носитель H3 = мощность TOST ячейки macro, к кластерной дисперсии добавлены "
+                                     "уровни нулевых матриц и перестановок π: sd_curveball²/J + sd_perm²/P"}},
     }
     return out

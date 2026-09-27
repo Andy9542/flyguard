@@ -6,12 +6,15 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import scipy.sparse as sp
+from threadpoolctl import threadpool_info
 
+from flyguard import nose
 from flyguard.baselines.transformers_guard import GuardModel
 from flyguard.config import config_hash
-from flyguard.experiments import (Context, FeatureContext, Runner, detector_spec, fly_spec, read_result,
+from flyguard.experiments import (Context, FeatureContext, Runner, detector_spec, engine, fly_spec, read_result,
                                   standard_evaluation, summarize)
 from flyguard.experiments.results import number, result_path, summarize_numbers, write_result
+from flyguard.readout import LinearReadout
 
 NAMES = ["regex", "tfidf_lr", "knn1", "knn5", "centroid", "lr_svd", "real_fly_bloom", "real_fly_linear",
          "flyhash_bloom", "flyhash_linear", "protectai_v2", "piguard"]
@@ -46,7 +49,7 @@ def evaluation(fc, fitted):
 
 
 # ---------------------------------------------------------------------------------------------- context
-def test_context_roles_never_contain_test_rows(ctx):
+def test_context_roles_never_contain_test_rows(ctx, recorder):
     assert not (ctx.windows["split"] == "test").any() and not (ctx.documents["split"] == "test").any()
     tr = ctx.train_windows
     assert (tr["source"] == "deep").all() and set(tr["label"]) == {0, 1}
@@ -56,7 +59,9 @@ def test_context_roles_never_contain_test_rows(ctx):
     pv = ctx.p_val_windows
     assert (pv["label"] == 0).all() and set(pv["doc_id"]) == ctx.p_val_doc_ids
     assert ctx.test_sources == ["deep", "bipia", "dojo", "dyn", "para", "notinject"]
-    assert ctx.p_test_size == len(ctx.p_test_doc_ids) and ctx.episodes is not None
+    assert ctx.p_test_size == len(ctx.p_test_doc_ids) and recorder.calls == []    # episodes: lazy, journaled once
+    assert len(ctx.episodes) and ctx.episodes is ctx.episodes
+    assert [c[:2] for c in recorder.calls] == [(str(ctx.episodes_path), "test")]
     assert ctx.connectome()[0].shape == (12, 6) and ctx.available_guards() == ["protectai_v2"]
 
 
@@ -143,6 +148,33 @@ def test_codes_have_exactly_k_winners_and_subsets_are_slices(fc):
     assert len(streamed) == 3 and (fc.codes(("n51_svd", "measured", None), "val") != sp.vstack(streamed)).nnz == 0
     with pytest.raises(ValueError):
         fc.fewshot_set(1000, 0)
+
+
+def test_streamed_bloom_fit_is_bit_identical(mctx, fc, fitted, gf, monkeypatch):
+    """Training sets too large to memoise (E3 folds) are fitted from streamed class counts: same model, same γ."""
+    monkeypatch.setattr(engine, "CODE_BATCH_BYTES", 1)                    # 32-row batches: two per training set
+    st = FeatureContext(mctx, 0, cache=False, guard_factory=gf, code_memo_bytes=1)
+    key = detector_spec("flyhash_bloom").code_key
+    assert (FeatureContext.codes(st, key, "train") != fc.codes(key, "train")).nnz == 0   # preallocated, 2 batches
+    monkeypatch.setattr(st, "codes", lambda *a, **k: pytest.fail("the streamed fit materialised a code matrix"))
+    for spec in (detector_spec("real_fly_bloom"), detector_spec("flyhash_bloom"), fly_spec("g5", gamma=0.5)):
+        a, b = fitted.get(spec.name) or fc.fit(spec), st.fit(spec)
+        assert a.choices == b.choices and len(set(b.choices["balanced_counts"])) == 1, spec.name
+        for attr in ("F_", "n_seen_", "class_counts_", "balanced_counts_", "balanced_index_"):
+            assert np.array_equal(getattr(a.model, attr), getattr(b.model, attr)), (spec.name, attr)
+        assert st.score_windows(b, "test:deep").equals(fc.score_windows(a, "test:deep"))
+
+
+def test_svd_and_fits_are_pinned_to_one_thread(mctx, monkeypatch):
+    """ТЗ 2.6: the randomized SVD and the lbfgs fits change bits with the BLAS thread count (``--jobs``)."""
+    seen = []
+    for cls in (nose.N51Svd, LinearReadout):
+        monkeypatch.setattr(cls, "fit", lambda self, *a, _o=cls.fit: seen.append(
+            {p["num_threads"] for p in threadpool_info()}) or _o(self, *a))
+    one = FeatureContext(mctx, 0, cache=False)
+    one.n51_svd
+    one.fit("real_fly_linear")
+    assert len(seen) >= 2 and all(s == {1} for s in seen)          # the SVD, then every C of the grid
 
 
 # ---------------------------------------------------------------------------------------------- detectors
@@ -234,6 +266,7 @@ def test_runner_writes_skips_and_summarizes(toy_cfg, toy_root, mctx, gf):
     assert r["config_hash"] == config_hash(toy_root) and r["smoke"] is False and r["seed"] == 0
     assert set(r["seeds"]) == set(toy_cfg.default["seeds"]["children"])
     assert r["timing"]["test_reads"] == [] == read_result(paths[1])["timing"]["test_reads"]  # shared ctx: no new reads
+    assert set(r["timing"]["threads"]) == {"env", "cpu_count", "pools"}      # thread counts in force (A39)
     assert r["numbers"]["custom/x"] == {"value": 1.5, "ci_low": None, "ci_high": None, "n": 3, "note": None}
     assert "n_docs=5" in r["notes"] and "macro_auc/real_fly_bloom" in r["numbers"]
     runner = Runner("E1", 0, root=toy_root, ctx=mctx, guard_factory=gf)

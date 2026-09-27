@@ -122,7 +122,8 @@ python3 - "$TMP_MANIFEST" "$MANIFEST" <<'PY'
 import json, sys, datetime
 tmp, out = sys.argv[1:3]
 d = {"generated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-     "pins": {"agentdojo": {"package": "0.1.35", "repo": "https://github.com/ethz-spylab/agentdojo", "benchmark_version": "v1.2.2"},
+     "pins": {"agentdojo": {"package": "0.1.35", "repo": "https://github.com/ethz-spylab/agentdojo", "benchmark_version": "v1.2.2",
+                            "tag": "v0.1.35", "commit": "a75aba7631d3ca5fb7ab938965c97ead2f9ff84b"},   # release tag of the installed package
               "agentdyn": {"repo": "https://github.com/SaFo-Lab/AgentDyn", "commit": "5353cf7615b135cace8d07c8f12dac53a16b6db3", "benchmark_version": "v1.2.2"},
               "flyhash_connectome": {"repo": "https://github.com/ssenge/FlyHash-Connectome", "commit": "91caf384abe291814d58e9563aa9713386d65a25"},
               "malecns": {"version": "v1.0", "minconf": 0.5, "bucket": "gs://flyem-male-cns/v1.0/"}},

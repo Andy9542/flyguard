@@ -311,6 +311,11 @@ def verdict_h2(results: Mapping[str, Any], cfg: Configs | None = None) -> Verdic
 # H3
 # ----------------------------------------------------------------------------------------------------------------
 def _h3_part(row: Mapping[str, Any] | None, delta_rel: float, alpha: float) -> dict[str, Any] | None:
+    """One H3 readout: TOST on the 90 % interval, then "отличается ли от нуля" at level α (ТЗ: the conclusion
+    separates "эквивалентна в коридоре" from "не отличается"). The zero test is the randomisation p (p <= α), else
+    the 95 % interval ``diff_ci95`` of the same draws; never the 90 % TOST interval, whose exclusion of zero is a
+    test at 2 × 5 % = 10 %. ``differs_from_zero`` of :func:`tost` (the 90 % reading) is kept as it is; the α-level
+    answer is ``differs_from_zero_alpha`` (None = neither input present) with its ``differs_basis``."""
     if not row:
         return None
     ci = _ci(row.get("diff_ci90"))
@@ -319,13 +324,22 @@ def _h3_part(row: Mapping[str, Any] | None, delta_rel: float, alpha: float) -> d
         return {"status": "нет ДИ"}
     t = tost(ci, equivalence_margin(float(ref), delta_rel))
     p = row.get("p_randomization")
-    p = None if p is None else float(p)
+    p = None if p is None or not math.isfinite(float(p)) else float(p)
+    ci95 = _ci(row.get("diff_ci95"))
+    if p is not None:
+        differs, basis = p <= alpha, "p_randomization"
+    elif ci95 is not None:
+        differs, basis = not ci95.contains(0.0), "ci95"
+    else:
+        differs, basis = None, None
     if t["equivalent"]:
-        reading = ("эквивалентна в коридоре, разность значимо отлична от нуля" if (p is not None and p <= alpha)
-                   or t["differs_from_zero"] else "эквивалентна в коридоре и не отличается от нуля")
+        reading = ("эквивалентна в коридоре; отличие от нуля не проверено (нет p рандомизации и 95% ДИ)"
+                   if differs is None else "эквивалентна в коридоре, разность значимо отлична от нуля" if differs
+                   else "эквивалентна в коридоре и не отличается от нуля")
     else:
         reading = "различие больше коридора" if t["outside_corridor"] else "ДИ шире коридора: эквивалентность не установлена"
     return {**t, "reference": float(ref), "p_randomization": p, "reading": reading,
+            "differs_from_zero_alpha": differs, "differs_basis": basis, "diff_ci95": _d(ci95),
             "sign": "measured>null" if ci.point > 0 else ("measured<null" if ci.point < 0 else "0")}
 
 
@@ -336,12 +350,13 @@ def verdict_h3(results: Mapping[str, Any], cfg: Configs | None = None,
     the 90 % two-stage-bootstrap CI of macroAUC(measured M) − mean macroAUC(curveball nulls) lies inside ±δ, δ =
     delta_rel × the null mean. Secondary readouts (linear, Bloom at 10 examples) and the randomisation p-values are
     reported alongside and do not change the status; the reason distinguishes "эквивалентна в коридоре" (possibly
-    with a small significant difference) from "не отличается" (p above α), as the ТЗ requires.
+    with a small significant difference) from "не отличается" (p above α, or without p the 95 % interval
+    ``diff_ci95`` containing zero), as the ТЗ requires; see :func:`_h3_part`.
 
-    ``results = {"val_macro_auc", "primary": {"diff_ci90", "reference", "p_randomization", "carrier"?},
+    ``results = {"val_macro_auc", "primary": {"diff_ci90", "reference", "p_randomization", "diff_ci95"?, "carrier"?},
     "secondary": {name: {...same...}}, "p_values": {name: p}? (Holm over secondary sources/metrics),
-    "precondition"?, "delta_rel"?, "alpha"?}``; ``power`` (the E0 table, row ``macro``) supersedes the ``carrier``
-    flag of ``primary``.
+    "precondition"?, "delta_rel"?, "alpha"?}``; ``power`` (the E0 table, row ``macro``, column ``auc_diff_h3`` when
+    present, else ``auc_diff``) supersedes the ``carrier`` flag of ``primary``.
     """
     st = _cfg_stats(cfg)
     pre = float(results.get("precondition", st["preconditions"]["h3_val_macro_auc"]))
@@ -349,7 +364,11 @@ def verdict_h3(results: Mapping[str, Any], cfg: Configs | None = None,
     alpha = float(results.get("alpha", st["bootstrap"]["alpha"]))
     val = results.get("val_macro_auc")
     primary = results.get("primary") or {}
-    carrier, why = _carrier_flag(primary, "macro", power)
+    # E0 gate: the macro row's H3 status (TOST power with the null-matrix and π levels of the two-stage interval,
+    # eval.power.h3_extra_variance); tables written before that column existed fall back to the plain macro cell
+    macro_row = ((power or {}).get("carriers") or {}).get("macro") or {}
+    gate_metric = "auc_diff_h3" if "auc_diff_h3" in macro_row else "auc_diff"
+    carrier, why = _carrier_flag(primary, "macro", power, gate_metric)
     part = _h3_part(primary, delta_rel, alpha)
     secondary = {k: _h3_part(v, delta_rel, alpha) for k, v in (results.get("secondary") or {}).items()}
     pv = {k: float(v) for k, v in (results.get("p_values") or {}).items() if v is not None}
@@ -357,7 +376,8 @@ def verdict_h3(results: Mapping[str, Any], cfg: Configs | None = None,
     effect = ci.point if ci else None
     cis = _d(ci)
     inputs = {"val_macro_auc": val, "precondition": pre, "delta_rel": delta_rel, "primary": part,
-              "secondary": secondary, "holm": holm(pv) if pv else {}, "carrier": {"macro": carrier, "e0": why}}
+              "secondary": secondary, "holm": holm(pv) if pv else {},
+              "carrier": {"macro": carrier, "e0": why, "metric": gate_metric}}
     if val is None or not math.isfinite(float(val)):
         return Verdict(INSUFFICIENT, effect, cis, "нет macroAUC настоящей мухи на валидации", inputs, "H3")
     if float(val) < pre:

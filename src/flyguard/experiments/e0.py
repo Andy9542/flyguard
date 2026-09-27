@@ -24,8 +24,17 @@ result (``frozen: true``); the acceptance check compares its timestamp with the 
 write ``results/power.json`` (``results/smoke/power.json`` in smoke mode, see :mod:`results`) and keep a copy under
 ``results/E0/power_stage<k>.json``. Idempotency is decided here, not by :class:`Runner` (whose skip rule keys on the
 seed file and the config hash only, which would let stage 2 be skipped after stage 1): a stage is skipped when
-``power.json`` exists with the current ``config_hash``, the same stage and the matching ``frozen`` flag, and stage 1
-refuses to overwrite a frozen file unless ``force``.
+``power.json`` exists with the current ``config_hash``, the same stage and seed, the matching ``frozen`` flag and a
+current seed file.
+
+The freeze is final (ТЗ «Задача выполнена» item 4: the power table is written before the final run). A frozen
+``power.json`` that is not skipped -- the configs changed after the freeze, another seed, a missing seed file -- is
+never recomputed silently: both stages raise unless ``force``, because a re-freeze after test results were read
+would move ``created_at`` past them and the acceptance check (``created_at`` earlier than every E1 seed file) would
+still pass. With ``force`` (a deliberate, journaled re-freeze: DEVIATIONS) the old table is first archived as
+``results/E0/power_frozen_<hash>_<created_at>.json`` and the new table records it (path relative to the root) under ``refrozen_over``. Smoke
+mode (``results/smoke/``) re-freezes over a stale table without ``force`` -- smoke results never feed the real
+verdicts and ``run_all.sh --smoke`` has no ``--force`` -- but archives and records it the same way.
 
 The per-seed result file holds the same numbers under stable keys (``size/<source>/n_pos``,
 ``power/<cell>/<level>/mdd`` ...), the tables ``carriers`` (источник × метрика -> статус), ``cells``, ``sizes``,
@@ -34,6 +43,7 @@ The per-seed result file holds the same numbers under stable keys (``size/<sourc
 from __future__ import annotations
 
 import math
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -289,13 +299,21 @@ def current_power(root: Path = ROOT, smoke: bool = False) -> dict[str, Any] | No
     return read_json(path) if path.exists() else None
 
 
+def frozen_archive_path(table: Mapping[str, Any], root: Path = ROOT, smoke: bool = False) -> Path:
+    """Where a frozen table is kept before it is overwritten (non-numeric stem: ``list_results`` ignores it)."""
+    h = str(table.get("config_hash") or "nohash")[:12]
+    stamp = "".join(ch for ch in str(table.get("created_at") or "undated") if ch.isalnum())
+    return results_mod.results_dir(root, smoke) / "E0" / f"power_frozen_{h}_{stamp}.json"
+
+
 def run_e0(stage: int, seed: int = 0, smoke: bool = False, root: Path = ROOT, cfg: Configs | None = None,
            force: bool = False, keep_cache: bool = False, ctx: Context | None = None,
            access_log: Callable | None = None, guard_factory: Callable | None = None,
            power_overrides: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Run E0 at ``stage`` (1 or 2) for one global seed; writes ``power.json``, its stage copy, the seed file and
     ``results/E0/summary.json``. Returns ``{"power_path", "result_path", "frozen", "skipped", "power"}``.
-    ``power_overrides`` (``n_rep``, ``n_boot``, ``delta_grid`` ...) exist for tests; the CLI passes none."""
+    ``power_overrides`` (``n_rep``, ``n_boot``, ``delta_grid`` ...) exist for tests; the CLI passes none. A frozen
+    ``power.json`` is overwritten only with ``force`` (or in smoke mode), after archiving it (module docstring)."""
     if int(stage) not in (1, 2):
         raise ValueError("E0 stage must be 1 or 2")
     stage = int(stage)
@@ -311,15 +329,40 @@ def run_e0(stage: int, seed: int = 0, smoke: bool = False, root: Path = ROOT, cf
         if same and results_mod.is_current("E0", seed, smoke, root):
             return {"power_path": ppath, "result_path": results_mod.result_path("E0", seed, smoke, root),
                     "frozen": bool(existing.get("frozen")), "skipped": True, "power": existing}
+        if existing.get("frozen") and not smoke:
+            why = ("config_hash differs from the current configs" if existing.get("config_hash") != config_hash(root)
+                   else f"frozen for seed {existing.get('seed')}" if int(existing.get("seed", -1)) != int(seed)
+                   else "the E0 seed file is missing or stale")
+            raise RuntimeError(
+                f"{ppath} is frozen (created_at {existing.get('created_at')}) and would be re-frozen ({why}). "
+                f"A re-freeze after the freeze is a deviation: journal it in DEVIATIONS.md and rerun "
+                f"`python -m flyguard.experiments.run E0 --stage {stage} --seed {seed} --force` (the old table is "
+                f"archived under results/E0/power_frozen_*.json)")
+    refrozen: dict[str, Any] | None = None
+    if existing is not None and existing.get("frozen"):
+        refrozen = {"path": frozen_archive_path(existing, root, smoke).relative_to(root).as_posix(),
+                    "config_hash": existing.get("config_hash"),
+                    "created_at": existing.get("created_at"), "stage": existing.get("stage"),
+                    "seed": existing.get("seed"), "reason": "force" if force else "smoke"}
     runner = Runner("E0", seed, smoke=smoke, root=root, cfg=cfg, ctx=ctx, keep_cache=keep_cache, force=True,
                     access_log=access_log, guard_factory=guard_factory)
     holder: dict[str, Any] = {}
 
     def body(fc: FeatureContext, rb: ResultBuilder) -> None:
         holder["power"] = build_power(fc, rb, stage, power_overrides)
+        if refrozen is not None:
+            holder["power"]["refrozen_over"] = refrozen
+            rb.extra["refrozen_over"] = refrozen
+            rb.note(f"E0: re-froze over the frozen power.json of {refrozen['created_at']} (config_hash "
+                    f"{str(refrozen['config_hash'])[:12]}, reason={refrozen['reason']}); "
+                    f"archived at {refrozen['path']}")
 
     result_path = runner.run(body)
     table = holder["power"]
+    if refrozen is not None:
+        atomic_write_json(root / refrozen["path"], existing)
+        print(f"E0: frozen {ppath} re-frozen (reason={refrozen['reason']}); the old table is kept at "
+              f"{refrozen['path']}", file=sys.stderr)
     atomic_write_json(ppath, table)
     atomic_write_json(power_copy_path(stage, root, smoke), table)
     results_mod.summarize("E0", smoke, root)

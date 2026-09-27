@@ -34,6 +34,16 @@ point of every fold; guard models can be passed as references and are scored fro
 registered as root sets, not subsets of one AgentDojo pool, so the FlyHash codes are computed for the fold's rows
 only.
 
+C_unl of E3 (ТЗ 1.9: SVD, idf, centring and standardisation are fit on C_unl, and test clusters never enter it): the
+E1 C_unl minus every AgentDojo window (:func:`e3_c_unl`), registered as ``"c_unl"`` before any nose is fitted
+(:func:`register_c_unl`). The E1 C_unl holds the clean E1-validation AgentDojo documents, and those sit on the test
+side of E3 folds -- every document of the held-out suite (``cross_suite``), the benign episodes of E1-validation tasks
+(``cross_template``), the held-out suite's benign episodes (``double_holdout``) -- where they are negatives of
+``fpr_at_tau``; E3 folds contain AgentDojo documents only, so dropping the ``dojo`` source removes every fold document
+from C_unl. The choice is fold-agnostic (one nose per
+seed, not per fold), so the E3 noses see no AgentDojo text at all (ASSUMPTIONS A32); the composition goes into the
+``transfer_c_unl`` table and a note.
+
 Status instead of failure: a family whose folds cannot be built or are all unusable (DEVIATIONS D6: only
 ``important_instructions`` was generated, so every ``cross_template`` and ``double_holdout`` fold lacks positives on
 one side) is recorded with status ``не хватило данных`` and the reason (templates present / missing, the usable
@@ -47,7 +57,8 @@ or ``travelximportant_instructions``):
   ``fold_min`` / ``fold_max``);
 thresholds ``tau_fold/<family>/<fold>/<detector>``; tables ``transfer_families`` (status per family),
 ``transfer_folds`` (per fold: usability, counts, hold-out sizes, FPR level), ``transfer_metrics`` (per fold x
-detector x metric), ``transfer_fits`` (validated hyperparameters per fold x detector).
+detector x metric), ``transfer_fits`` (validated hyperparameters per fold x detector), ``transfer_c_unl`` (windows and
+documents of the E1 C_unl and of the E3 C_unl per source).
 
 Caveat carried into the notes: AgentDojo environments are static (contract §10), the same injection strings recur
 across tasks and suites, so fold sides can share near-identical windows; the benign side of each fold is the
@@ -115,6 +126,54 @@ def fold_reason(fold: Mapping[str, Any]) -> str:
     counts = {k: fold.get(k) for k in ("n_train_pos", "n_train_neg", "n_test_pos", "n_test_neg")}
     zero = [k for k, v in counts.items() if not v]
     return "нет " + ", ".join(zero) if zero else "usable"
+
+
+# ----------------------------------------------------------------------------------------------------------------
+# C_unl of E3
+# ----------------------------------------------------------------------------------------------------------------
+C_UNL_EXCLUDED_SOURCES: tuple[str, ...] = ("dojo",)
+
+
+def e3_c_unl(ctx: Context) -> pd.DataFrame:
+    """The E3 C_unl (ТЗ 1.9): the E1 C_unl without the sources E3 folds are built from (:data:`C_UNL_EXCLUDED_SOURCES`).
+
+    ``splits.build_e3_folds`` draws every fold from AgentDojo documents, and the clean E1-validation AgentDojo
+    documents of the E1 C_unl lie on the test side of the folds of all three families; fitting the
+    N16k centring, the N51-svd SVD / standardisation and the TF-IDF idf on them would let the fold's test negatives
+    shape the noses that score them."""
+    base = ctx.c_unl_windows
+    return base[~base["source"].isin(C_UNL_EXCLUDED_SOURCES)].reset_index(drop=True)
+
+
+def register_c_unl(fc: FeatureContext) -> pd.DataFrame:
+    """Register :func:`e3_c_unl` as the feature context's ``"c_unl"`` before any nose exists (the pattern of
+    ``contract_run``). Idempotent for the same windows. ``FeatureContext.register_set`` does not invalidate noses,
+    counts or features already derived from another ``"c_unl"``, so a context that holds any of them raises instead
+    of silently scoring E3 with noses fit on the E1 C_unl (the Runner hands every experiment a fresh context). The
+    per-seed count cache keys on the texts' hash, so sharing the ``c_unl`` file name with E1 is safe."""
+    c_unl = e3_c_unl(fc.ctx)
+    prior = fc._sets.get("c_unl")
+    if prior is not None and prior.frame["window_id"].tolist() == c_unl["window_id"].tolist():
+        return prior.frame
+    stale = (bool(fc._noses) or any(k[0] == "c_unl" for k in fc._counts)
+             or any(k[1] == "c_unl" for k in fc._features))
+    if stale:
+        raise RuntimeError("E3 needs a feature context without noses: C_unl-derived state already exists, fit on a "
+                           "C_unl that contains fold test documents (ТЗ 1.9); run E3 on a fresh FeatureContext")
+    fc.register_set("c_unl", c_unl)
+    return c_unl
+
+
+def c_unl_composition(ctx: Context, c_unl: pd.DataFrame) -> list[dict[str, Any]]:
+    """Rows of ``transfer_c_unl``: windows and documents per source in the E1 and the E3 C_unl."""
+    base = ctx.c_unl_windows
+    rows = []
+    for src in sorted(set(base["source"]) | set(c_unl["source"])):
+        b, e = base[base["source"] == src], c_unl[c_unl["source"] == src]
+        rows.append({"source": src, "n_windows_e1_c_unl": int(len(b)), "n_docs_e1_c_unl": int(b["doc_id"].nunique()),
+                     "n_windows_e3_c_unl": int(len(e)), "n_docs_e3_c_unl": int(e["doc_id"].nunique()),
+                     "excluded": src in C_UNL_EXCLUDED_SOURCES})
+    return rows
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -224,6 +283,7 @@ def run_fold(fc: FeatureContext, ev: Evaluator, family: str, fold: Mapping[str, 
         return fail("в отложенных валидационных кластерах нет документов без инъекции для τ_fold")
     if test.empty:
         return fail("тестовая сторона фолда пуста после исключения дубликатов")
+    register_c_unl(fc)  # no-op after run_e3; guards direct calls against noses fit on the E1 C_unl
     fit_ws = fc.register_set(f"e3:{family}:{name}:fit", fit_frame)
     val_ws = fc.register_set(f"e3:{family}:{name}:val", val_frame)
     test_ws = fc.register_set(f"e3:{family}:{name}:test", test)
@@ -289,6 +349,7 @@ def run_e3(fc: FeatureContext, rb: ResultBuilder, detectors: Sequence[str] | Non
     references = tuple(references if references is not None else E3_REFERENCES)
     val_fraction = float(fc.cfg.default["splits"]["val_fraction"] if val_fraction is None else val_fraction)
     families = tuple(families if families is not None else FAMILIES)
+    c_unl = register_c_unl(fc)  # before any nose: SVD / idf / centring never see a fold document (ТЗ 1.9)
     e3 = fc.ctx.splits.get("e3") or {}
     ev = Evaluator(fc)
     usable = {fam: [f for f in (e3.get(fam) or []) if f.get("usable")] for fam in families}
@@ -339,7 +400,13 @@ def run_e3(fc: FeatureContext, rb: ResultBuilder, detectors: Sequence[str] | Non
     rb.add_table("transfer_folds", fold_rows)
     rb.add_table("transfer_metrics", metric_rows)
     rb.add_table("transfer_fits", fit_rows)
+    composition = c_unl_composition(fc.ctx, c_unl)
+    rb.add_table("transfer_c_unl", composition)
     rb.note(STATIC_ENV_NOTE)
+    rb.note(f"E3: C_unl (SVD, idf, centring; ТЗ 1.9) = E1 C_unl without {', '.join(C_UNL_EXCLUDED_SOURCES)} windows, "
+            f"because the E1-validation AgentDojo documents lie on the test side of E3 folds: {len(c_unl)} windows ("
+            + ", ".join(f"{r['source']} {r['n_windows_e3_c_unl']}" for r in composition if not r["excluded"])
+            + "); one C_unl for all folds, so the E3 noses see no AgentDojo text (ASSUMPTIONS A32)")
     rb.note(f"E3: detectors {list(detectors)}, references {list(references)}; fold validation = {val_fraction:g} of the "
             f"train-side clusters (seed subsample, redrawn up to {HOLDOUT_ATTEMPTS} times until both sides have both "
             f"classes); tau_fold on hold-out negative documents; bootstrap n={ev.n_boot}")

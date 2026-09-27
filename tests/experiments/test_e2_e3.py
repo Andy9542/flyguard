@@ -178,8 +178,12 @@ def test_e2_shot_levels_parse():
 
 
 # ---------------------------------------------------------------------------------------------- E3
-def test_e3_degenerate_folds_report_no_data(toy):
-    ctx, rec, fc = toy
+def test_e3_degenerate_folds_report_no_data(toy, gf):
+    ctx, rec, shared = toy
+    shared.n16k                                             # E2's context holds noses fit on the E1 C_unl
+    with pytest.raises(RuntimeError, match="fresh FeatureContext"):
+        e3.register_c_unl(shared)
+    fc = FeatureContext(ctx, 0, purpose="e3 tests", guard_factory=gf, cache=False)
     before = len(rec.calls)
     rb = ResultBuilder()
     res = e3.run_e3(fc, rb, detectors=E3_DETS)
@@ -238,6 +242,20 @@ def test_e3_two_templates_three_suites(transfer):
     assert set(fits.loc[fits["detector"] == "regex", "trained"]) == {False}
     r = res["cross_suite"][0]
     assert r["status"] == e3.STATUS_OK and r["fold_row"]["usable"]
+    # ТЗ 1.9: the noses were fit on a C_unl without any fold test document (the E1 C_unl has some)
+    test_docs = {d for fam_ in e3.FAMILIES for f in e3_manifest[fam_] if f["usable"] for d in f["test"]}
+    cu = fc.window_set("c_unl").frame
+    assert set(ctx.c_unl_windows["doc_id"]) & test_docs and not set(cu["doc_id"]) & test_docs
+    assert (cu["source"] != "dojo").all() and 0 < len(cu) < len(ctx.c_unl_windows)
+    assert fc.counts("c_unl").shape[0] == len(cu)
+    assert np.allclose(fc.n16k.mean_, np.asarray(fc.features("n16k", "c_unl").mean(axis=0)).ravel(), atol=1e-6)
+    e1_nose = FeatureContext(ctx, 0, purpose="e3 tests", cache=False).n16k
+    assert not np.allclose(fc.n16k.mean_, e1_nose.mean_)
+    comp = {row["source"]: row for row in rb.tables["transfer_c_unl"]}
+    assert comp["dojo"]["excluded"] and comp["dojo"]["n_windows_e3_c_unl"] == 0 < comp["dojo"]["n_windows_e1_c_unl"]
+    assert sum(row["n_windows_e3_c_unl"] for row in comp.values()) == len(cu)
+    assert any("C_unl" in n and "A32" in n for n in rb.notes)
+    assert e3.register_c_unl(fc) is not None                 # idempotent on the same windows
 
 
 def test_e3_holdout_is_deterministic_and_content_based():

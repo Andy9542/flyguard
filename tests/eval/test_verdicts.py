@@ -203,6 +203,44 @@ def test_h3_all_statuses(ci_dict):
     assert verdict_h3(_h3(ci_dict, p=None), power=_power(macro=True)).status == CONFIRMED  # None p formats as "—"
 
 
+
+def test_h3_zero_difference_is_decided_at_alpha_not_by_the_90_interval(ci_dict):
+    """The 90 % TOST interval excluding 0 is a 10 % test; "значимо отлична" needs p <= α or the 95 % interval."""
+    r = _h3(ci_dict, p=0.3)
+    r["primary"]["diff_ci90"] = ci_dict(0.01, 0.002, 0.018, 0.9)  # inside ±0.04, excludes 0 at 90 %
+    v = verdict_h3(r)
+    part = v.inputs["primary"]
+    assert v.status == CONFIRMED and "не отличается от нуля" in v.reason and "значимо" not in v.reason
+    assert part["differs_from_zero"] is True and part["differs_from_zero_alpha"] is False
+    assert part["differs_basis"] == "p_randomization"
+    # no p: the 95 % interval of the same draws decides
+    r["primary"]["p_randomization"] = None
+    r["primary"]["diff_ci95"] = ci_dict(0.01, -0.001, 0.021)
+    part = verdict_h3(r).inputs["primary"]
+    assert part["differs_from_zero_alpha"] is False and part["differs_basis"] == "ci95"
+    r["primary"]["diff_ci95"] = ci_dict(0.01, 0.001, 0.019)
+    assert "значимо отлична" in verdict_h3(r).reason
+    # neither p (NaN counts as missing) nor a 95 % interval: equivalence stands, the zero test is not claimed
+    r["primary"]["p_randomization"] = float("nan")
+    del r["primary"]["diff_ci95"]
+    v = verdict_h3(r)
+    assert v.status == CONFIRMED and "не проверено" in v.reason and v.inputs["primary"]["differs_from_zero_alpha"] is None
+
+
+
+def test_h3_gate_reads_the_two_stage_column_of_e0(ci_dict):
+    """E0 folds the null-matrix and π spreads into the H3 power (``auc_diff_h3``); H3 must gate on it."""
+    r = _h3(ci_dict)
+    del r["primary"]["carrier"]
+    power = {"carriers": {"macro": {"auc_diff": "несёт", "auc_diff_h3": "не хватило данных"}}}
+    v = verdict_h3(r, power=power)
+    assert v.status == INSUFFICIENT and v.inputs["carrier"]["metric"] == "auc_diff_h3"
+    power["carriers"]["macro"]["auc_diff_h3"] = "несёт"
+    assert verdict_h3(r, power=power).status == CONFIRMED
+    # an older table without the column: the plain macro cell
+    assert verdict_h3(r, power=_power(macro=True)).inputs["carrier"]["metric"] == "auc_diff"
+
+
 def test_carriers_from_power():
     power = {"carriers": {"deep": {"auc_diff": "не хватило данных", "tpr_at_fpr": "только 5%"},
                           "dojo": {"auc_diff": "несёт", "tpr_at_fpr": "только 5%"}}}

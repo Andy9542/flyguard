@@ -37,10 +37,15 @@
 # Timing log: logs/run_all.log, one tab-separated line per stage event
 #   <utc time>  <mode: real|smoke>  <stage>  <status: start|done|skip|fail|TOTAL>  <seconds>  <note>
 # scripts/check_acceptance.py derives the 15-minute smoke criterion from these lines: the time of a clean smoke run
-# = the sum, over the stages build_stage1 .. report, of each stage's most recent smoke "done" duration (a re-entered
-# or --from run skips finished stages, so the TOTAL of the last run alone would understate a clean run).
+# = the sum, over the stages build_stage1 .. report (prescore included), of each stage's most recent smoke "done"
+# duration (a re-entered or --from run skips finished stages, so the TOTAL of the last run alone would understate a
+# clean run). A clean machine has no guard scores: the prescore "start" line notes scores_cache_rows=<n>, the rows
+# already in baselines.transformers.cache_dir, and the criterion counts only a prescore measured from an empty cache
+# (to re-measure after a real run, move data/processed/scores_cache aside and rerun scripts/smoke.sh).
 #
-# Exit status: non-zero on the first failing stage (set -euo pipefail); in --smoke the final check stage is
+# Exit status: non-zero on the first failing stage (set -euo pipefail, re-armed inside every stage body: a stage
+# fails on its first failing command, and a seed process of --jobs that fails or is killed fails its stage after
+# the summary of the seeds that did finish is rebuilt); in --smoke the final check stage is
 # reported but not fatal (the acceptance criteria describe the real run) and runs without pytest, the log line says
 # which. A clean machine needs the frozen traces on disk (data/traces, or shared.traces_dir in configs/operator.yaml)
 # for the full build: traces are never regenerated once results/shared/traces_manifest.json exists.
@@ -117,8 +122,9 @@ stage_done() {
     gen_traces) [[ -f results/shared/traces_manifest.json ]] && echo done || echo todo ;;
     gen_paraphrases) [[ -f data/paraphrases/paraphrases_manifest.json && -f data/paraphrases/paraphrases.csv ]] && echo done || echo todo ;;
     report|check) echo todo ;;
-    prescore)
-      [[ -f "logs/prescore_${MODE}.done" && "$(cat "logs/prescore_${MODE}.done")" == "$(sha256sum "$( [[ $SMOKE == 1 ]] && echo data/processed/smoke || echo data/processed)/windows.parquet" 2>/dev/null | cut -c1-64)" ]] && echo done || echo todo ;;
+    prescore)   # the marker holds the hash of the scored windows.parquet; a cache moved aside (0 rows) is not done
+      [[ -f "logs/prescore_${MODE}.done" && "$(cat "logs/prescore_${MODE}.done")" == "$(sha256sum "$( [[ $SMOKE == 1 ]] && echo data/processed/smoke || echo data/processed)/windows.parquet" 2>/dev/null | cut -c1-64)" ]] \
+        && [[ "$(scores_cache_rows)" =~ ^[1-9][0-9]*$ ]] && echo done || echo todo ;;
     *) "$PY" - "$stage" "$SMOKE" "$SEEDS" <<'PY'
 import json, sys
 from pathlib import Path
@@ -210,10 +216,11 @@ run_gen_traces() {
     say "smoke: traces are not generated (ТЗ: smoke runs on already generated episodes); results/shared/traces_manifest.json is missing"
     return 0
   fi
-  local traces_dir; traces_dir="$(yaml_get configs/operator.yaml shared.traces_dir)"
+  local traces_dir; traces_dir="$(yaml_get configs/operator.yaml shared.traces_dir)" || return
   if [[ -z "$traces_dir" ]]; then
-    [[ -f results/pilot.json ]] || scripts/gen_traces.sh pilot
-    scripts/gen_traces.sh run
+    # explicit returns: a failed pilot or run must never be followed by freeze (the manifest would freeze a partial set)
+    if [[ ! -f results/pilot.json ]]; then scripts/gen_traces.sh pilot || return; fi
+    scripts/gen_traces.sh run || return
   else
     say "operator traces in $traces_dir: freezing the manifest only"
   fi
@@ -245,10 +252,19 @@ run_experiment() {
     # one process per seed; E1 times the transformer guards only on the first seed (A39); then one summary
     local nt=$(( $(nproc) / JOBS )); (( nt < 1 )) && nt=1
     export OMP_NUM_THREADS=$nt MKL_NUM_THREADS=$nt OPENBLAS_NUM_THREADS=$nt NUMEXPR_NUM_THREADS=$nt   # no BLAS oversubscription
+    # xargs exits 123 when a seed process fails and 125 when one is killed (then it starts no further seeds): that
+    # status is the stage's status; the summary is still rebuilt from the seeds that finished, and a rerun of the
+    # stage computes only the missing seeds (done predicate: every requested seed current)
+    local rc=0 src=0
     printf '%s\n' ${SEEDS//,/ } | xargs -P "$JOBS" -I{} bash -c '
       extra=(); [[ "$1" == E1 && "$2" != "$3" ]] && extra=(--latency-guards never)
-      exec "$0" -m flyguard.experiments.run "$1" --seeds "$2" "${extra[@]}" >> "logs/${1}_seed$2.log" 2>&1' "$PY" "$E" {} "$first"
-    "$PY" -c 'import sys; from flyguard.experiments import results as R; R.summarize(sys.argv[1], False)' "$E"
+      exec "$0" -m flyguard.experiments.run "$1" --seeds "$2" "${extra[@]}" >> "logs/${1}_seed$2.log" 2>&1' "$PY" "$E" {} "$first" || rc=$?
+    "$PY" -c 'import sys; from flyguard.experiments import results as R; R.summarize(sys.argv[1], False)' "$E" || src=$?
+    if [[ $rc != 0 ]]; then
+      say "$E: a seed process failed or was killed (xargs exit $rc); see logs/${E}_seed<s>.log"
+      return "$rc"
+    fi
+    return "$src"
   else
     "$PY" "${EXP_CMD[@]}" "$E" --seeds "$SEEDS" "${SMOKE_FLAG[@]}"
   fi
@@ -260,6 +276,17 @@ run_e4() { run_experiment E4; }
 run_e5() { run_experiment E5; }
 run_e6() { run_experiment E6; }
 run_contract() { "$PY" "${EXP_CMD[@]}" contract --seeds "${SEEDS%%,*}" "${SMOKE_FLAG[@]}"; }   # one CSV, first seed (contract_run)
+scores_cache_rows() {   # rows already in the guard score caches (parquet footers only: hashes and scores, no text)
+  "$PY" - <<'PY' 2>/dev/null || echo unknown
+from pathlib import Path
+import pyarrow.parquet as pq
+from flyguard.config import ROOT, load_configs
+d = Path(load_configs().default["baselines"]["transformers"]["cache_dir"])
+d = d if d.is_absolute() else ROOT / d
+print(sum(pq.read_metadata(p).num_rows for p in sorted(d.glob("*.parquet"))) if d.is_dir() else 0)
+PY
+}
+stage_note() { [[ "$1" == prescore ]] && echo "scores_cache_rows=$(scores_cache_rows)" || true; }
 run_prescore() {
   local m pids=() rc=0 wp
   for m in protectai_v2 piguard prompt_guard_2; do
@@ -296,10 +323,16 @@ for stage in "${STAGES[@]}"; do
     [[ $DRY == 1 ]] || logline "$stage" skip 0 "done"; say "skip $stage (done)"; continue
   fi
   if [[ $DRY == 1 ]]; then say "would run $stage"; continue; fi
-  logline "$stage" start 0
-  say "start $stage"
-  t=$(date +%s); rc=0
-  ( "run_$stage" ) || rc=$?
+  note="$(stage_note "$stage")"
+  logline "$stage" start 0 "$note"
+  say "start $stage${note:+ ($note)}"
+  t=$(date +%s)
+  # not `( ... ) || rc=$?`: bash ignores errexit inside a command of an || list, so a stage body would run on past
+  # its failing commands and report the status of its last one; `set -e` inside the subshell re-arms it
+  set +e
+  ( set -e; "run_$stage" )
+  rc=$?
+  set -e
   dt=$(( $(date +%s) - t ))
   if [[ $rc == 0 ]]; then
     logline "$stage" done "$dt"; say "done $stage in ${dt}s"

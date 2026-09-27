@@ -9,8 +9,8 @@ from flyguard.config import load_configs
 from flyguard.eval.metrics import auc
 from flyguard.eval.power import (CARRIES, CLUSTER_MODEL_CONSTANT, CLUSTER_MODEL_INDEPENDENT, CLUSTER_MODEL_OBSERVED,
                                  INSUFFICIENT, ONLY_5, ONLY_AUC, ONLY_FPR, binormal_shift, carrier_rule, cell_seed,
-                                 cluster_model, notinject_table, power_cell, power_params, power_table,
-                                 proportion_diff_ci_width, simulate_source, spread)
+                                 cluster_model, h3_extra_variance, notinject_table, power_cell, power_params,
+                                 power_table, proportion_diff_ci_width, simulate_source, spread)
 
 
 def test_carrier_rule_thresholds():
@@ -106,7 +106,7 @@ def test_power_table_shape_and_statuses():
     assert tab["levels"] == [0.75, 0.85, 0.95] and tab["delta_rel"] == 0.05 and tab["fpr_target"] == 0.05
     assert set(tab["carriers"]) == {"deep", "dojo", "notinject", "macro"}
     for s in ("deep", "dojo", "macro"):
-        assert set(tab["carriers"][s]) == {"auc", "auc_diff", "tpr_at_fpr"}
+        assert set(tab["carriers"][s]) == {"auc", "auc_diff", "tpr_at_fpr"} | ({"auc_diff_h3"} if s == "macro" else set())
         assert tab["carriers"][s]["tpr_at_fpr"] == ONLY_5
         assert tab["carriers"][s]["auc"] == CARRIES
         assert tab["carriers"][s]["auc_diff"] in (CARRIES, INSUFFICIENT)
@@ -144,7 +144,8 @@ def test_power_table_pool_rule_small_sources_and_order():
     few = power_table(cfg, {"deep": {"n_pos": 5, "n_neg": 5, "cluster_sizes": None}}, None, pools={"P_test": 3000},
                       n_rep=2, n_boot=20, delta_grid=(0.1,))
     assert few["carriers"]["deep"] == {"auc": INSUFFICIENT, "auc_diff": INSUFFICIENT, "tpr_at_fpr": INSUFFICIENT}
-    assert few["carriers"]["macro"] == {"auc": INSUFFICIENT, "auc_diff": INSUFFICIENT, "tpr_at_fpr": INSUFFICIENT}
+    assert few["carriers"]["macro"] == {"auc": INSUFFICIENT, "auc_diff": INSUFFICIENT, "auc_diff_h3": INSUFFICIENT,
+                                        "tpr_at_fpr": INSUFFICIENT}
     assert few["sizes"]["macro"]["n_clusters"] is None
     # the caller's dict order does not change any number, and a cell's seed depends on its name and level only
     two = {"deep": deep, "bipia": {"n_pos": 30, "n_neg": 30, "cluster_label_sizes": [[1, 1]] * 30}}
@@ -175,3 +176,37 @@ def test_notinject_width_and_spread():
     assert s["half_width"] == pytest.approx(1.96 * s["sd"], rel=1e-3) and s["level"] == 0.95
     assert spread([0.8, 0.82, 0.78], level=0.90)["half_width"] < s["half_width"]
     assert spread(None) is None and spread([]) is None and spread([0.5])["sd"] == 0.0
+
+
+def test_h3_power_folds_the_null_and_pi_spreads_in():
+    """ТЗ Этап 0: the curveball and perm spreads belong to the H3 TOST power (two-stage interval); H1b keeps the
+    plain macro cell. A large π spread must be able to withdraw H3 while the plain macro cell still carries."""
+    cfg = load_configs()
+    big = {"deep": {"n_pos": 400, "n_neg": 400, "cluster_sizes": None}}
+    kw = dict(n_rep=3, n_boot=40, delta_grid=(0.1,), seed=2)
+    plain = power_cell(big, 0.95, 0.05, **kw)
+    zero = power_cell(big, 0.95, 0.05, extra_sd=0.0, **kw)
+    wide = power_cell(big, 0.95, 0.05, extra_sd=0.2, **kw)
+    assert "two_stage" not in plain
+    assert {k: v for k, v in wide.items() if k != "two_stage"} == plain  # the extra stream leaves the cell alone
+    assert zero["two_stage"]["tost_power"] == plain["tost_power"] and zero["two_stage"]["status"] == plain["status"]
+    assert wide["two_stage"]["tost_power"] <= plain["tost_power"] and wide["two_stage"]["status"] == INSUFFICIENT
+    assert wide["two_stage"]["se_diff"] == pytest.approx(np.hypot(plain["se_diff"], 0.2))
+
+    val = {"val_auc": {"deep": 0.95}, "curveball_val_macro_auc": [0.9, 0.91, 0.92], "perm_val_macro_auc": [0.5, 0.95] * 3}
+    x = h3_extra_variance(val, cfg)
+    j, p = cfg.default["expansion"]["curveball"]["n_null"], len(cfg.default["seeds"]["global"])
+    assert x["j_null"] == j and x["n_perm"] == p and x["spread_used"] == {"curveball": True, "perm": True}
+    assert x["extra_sd"] == pytest.approx(np.sqrt(np.var([0.9, 0.91, 0.92], ddof=1) / j + np.var([0.5, 0.95] * 3, ddof=1) / p))
+    assert h3_extra_variance(val, cfg, smoke=True)["j_null"] == cfg.default["smoke"]["n_null"]
+    tab = power_table(cfg, big, val, pools={"P_test": 3000}, n_rep=3, n_boot=40, delta_grid=(0.1,))
+    assert tab["carriers"]["macro"]["auc_diff"] == CARRIES and tab["hypotheses"]["H1b"]["macro"] == CARRIES
+    assert tab["carriers"]["macro"]["auc_diff_h3"] == INSUFFICIENT == tab["hypotheses"]["H3"]["macro"]
+    ts = tab["hypotheses"]["H3"]["two_stage"]
+    assert tab["hypotheses"]["H3"]["macro_plain"] == CARRIES and ts["extra_sd_over_delta"] > 1
+    assert ts["tost_power"] < ts["tost_power_plain"]
+    # no spread measured: nothing is added, and the table says so
+    bare = power_table(cfg, big, {"val_auc": {"deep": 0.95}}, pools={"P_test": 3000}, n_rep=3, n_boot=40,
+                       delta_grid=(0.1,))
+    assert bare["carriers"]["macro"]["auc_diff_h3"] == bare["carriers"]["macro"]["auc_diff"] == CARRIES
+    assert bare["hypotheses"]["H3"]["two_stage"]["spread_used"] == {"curveball": False, "perm": False}

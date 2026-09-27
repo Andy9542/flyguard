@@ -19,11 +19,14 @@ Pipeline for one global seed ``s`` (children from :func:`flyguard.config.seeds_f
 5. *Codes*: ``fly_code(U, M, k)`` with ``k = k_for(m, k_frac)``; the N16k -> FlyHash path passes ``mean = N16k.mean_``
    (centring inside the product). Codes of small sets are memoised per (nose, matrix, k); large sets are streamed
    in row batches, and every readout sharing a code key is scored from the same batch (FlyHash-20 coding costs
-   ~16 ms and ~130 KB per window, so BIPIA test is never materialised).
+   ~16 ms and ~130 KB per window, so BIPIA test is never materialised). A Bloom readout whose training set is too
+   large to memoise (E3 folds) is fitted from per-class code counts accumulated over streamed batches, with the
+   same numbers as the materialised fit (:meth:`FeatureContext._fit_bloom_streamed`).
 6. *Detectors* (:data:`DETECTORS`, ТЗ Этап 2–3 / design_experiments table 5) are fitted on the train set with every
    hyperparameter chosen on validation AUC only: γ through ``readout.select_gamma``, C through ``readout.select_C``,
    the lexical baselines through their own ``fit(X_val, y_val, groups)``; guard models are inference only and
-   scored once per window set (cached by ``text_hash`` inside ``GuardModel``).
+   scored once per window set (cached by ``text_hash`` inside ``GuardModel``). Fits and the N51-svd are computed
+   with the BLAS/OpenMP pools pinned to one thread, so a seed's numbers do not depend on ``run_all.sh --jobs``.
 7. *Evaluation* (:class:`Evaluator`, :func:`standard_evaluation`): document scores = max over non-excluded windows
    (``eval.metrics.doc_scores``), per-source AUC and macroAUC with cluster-bootstrap CIs, paired differences at
    95 % and 90 % from the same draws (with the bootstrap p), τ_FPR on P_val and TPR@FPR on the test positives,
@@ -42,6 +45,8 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
+from sklearn.metrics import roc_auc_score
+from threadpoolctl import threadpool_limits
 
 from flyguard import fly, nose
 from flyguard.baselines.lexical import make_lexical_scorers
@@ -55,7 +60,7 @@ from flyguard.eval.tost import bootstrap_p
 from flyguard.experiments import results as results_mod
 from flyguard.experiments.context import Context
 from flyguard.io import read_json
-from flyguard.readout import BloomReadout, LinearReadout, select_C, select_gamma
+from flyguard.readout import BloomReadout, LinearReadout, balance_indices, select_C, select_gamma
 
 CACHE_BUDGET_BYTES = 200 << 20   # per seed (task constraint: feature caches per seed under 200 MB)
 CODE_MEMO_BYTES = 256 << 20      # codes of a set are kept in memory below this size, streamed above it
@@ -369,9 +374,16 @@ class FeatureContext:
 
     @property
     def n51_svd(self) -> nose.N51Svd:
+        """N51-svd fitted on C_unl with the BLAS pool pinned to one thread: the randomized TruncatedSVD gives
+        different components at different OpenMP/BLAS thread counts (bit-level, ~1e-3 on the features), and
+        ``run_all.sh --jobs N`` changes that count, so without the pin a seed would not reproduce across runs
+        (ТЗ 2.6 "детерминизм при фиксированном seed", ASSUMPTIONS A14/A39). The thread counts in force are
+        recorded in every result file (``timing.threads``, :func:`flyguard.experiments.results.thread_info`)."""
         if "n51_svd" not in self._noses:
-            self._noses["n51_svd"] = nose.N51Svd(rank=self.d_glom, seed_svd=self.seeds["svd"],
-                                                 seed_perm=self.seeds["perm"]).fit(self.features("n16k", "c_unl"))
+            X = self.features("n16k", "c_unl")
+            with threadpool_limits(limits=1):
+                self._noses["n51_svd"] = nose.N51Svd(rank=self.d_glom, seed_svd=self.seeds["svd"],
+                                                     seed_perm=self.seeds["perm"]).fit(X)
         return self._noses["n51_svd"]
 
     @property
@@ -488,12 +500,32 @@ class FeatureContext:
         memo = (key, ws.name)
         if memo in self._codes:
             return self._codes[memo]
-        Z = sp.vstack([z for _, z in self.iter_codes(key, ws)], format="csr") if ws.n else \
-            sp.csr_matrix((0, self.code_width(key)[0]), dtype=np.float32)
         m, k = self.code_width(key)
+        if not ws.n:
+            Z = sp.csr_matrix((0, m), dtype=np.float32)
+        elif key[1] == "dense_sign":  # variable row weight; the sign code is only |M|/d cells wide
+            Z = sp.vstack([z for _, z in self.iter_codes(key, ws)], format="csr")
+        else:  # k-WTA: exactly k winners per row, so the csr arrays are preallocated and filled batch by batch
+            # (a list of batches plus ``vstack`` held twice the code size, ~8 GB for an E3 fold at FlyHash-20)
+            indices = np.empty(ws.n * k, dtype=np.int32)
+            for sl, z in self.iter_codes(key, ws):
+                if z.nnz != (sl.stop - sl.start) * k:
+                    raise RuntimeError(f"code batch of {key} does not have exactly k={k} winners per row")
+                indices[sl.start * k: sl.stop * k] = z.indices
+            Z = sp.csr_matrix((np.ones(ws.n * k, dtype=np.float32), indices,
+                               np.arange(0, ws.n * k + 1, k, dtype=np.int64)), shape=(ws.n, m))
+            Z.has_sorted_indices = True
         if ws.n * k * 8 <= self.code_memo_bytes:
             self._codes[memo] = Z
         return Z
+
+    def _codes_in_memory(self, key: tuple, ws: WindowSet) -> bool:
+        """Whether :meth:`codes` of this set is cheap to hold: memoised (itself or its root set) or small enough to
+        be memoised. Otherwise a fit streams the set (:meth:`_fit_bloom_streamed`) instead of materialising it."""
+        root = ws.parent if ws.parent is not None else ws.name
+        if (key, ws.name) in self._codes or (key, root) in self._codes:
+            return True
+        return ws.n * self.code_width(key)[1] * 8 <= self.code_memo_bytes
 
     def iter_codes(self, key: tuple, ws: str | WindowSet, batch_rows: int | None = None) -> Iterator[tuple[slice, sp.csr_matrix]]:
         """Stream ``(row slice, code batch)`` over a set; memoised codes are yielded whole."""
@@ -520,7 +552,20 @@ class FeatureContext:
         return self._guards[name]
 
     def fit(self, spec: DetectorSpec | str, train: str | WindowSet = "train", val: str | WindowSet = "val") -> FittedDetector:
-        """Fit one detector on ``train`` with validation-based choices on ``val`` (deepset val by default)."""
+        """Fit one detector on ``train`` with validation-based choices on ``val`` (deepset val by default).
+
+        The fit runs with the BLAS/OpenMP pools pinned to one thread (ТЗ 2.6 determinism, ASSUMPTIONS A14/A39):
+        the multithreaded dot products inside lbfgs and the centroid means change the last bits of the fitted
+        coefficients with the thread count (measured on the smoke tables: tfidf_lr and centroid window scores differ
+        by 1-2e-16 between 1, 4 and 16 threads, enough to break or make a score tie), and ``run_all.sh --jobs N``
+        changes that count. Nothing in a fit is BLAS-bound (sparse products, 51-d dense rows), so the pin costs
+        nothing measurable. Scoring is not pinned: with the pinned fits, the fitted choices and the window scores of
+        every non-guard E1 detector and of the E5-style controls (sign code, N51-hash, random, Curveball, random:m)
+        were identical at 1, 4 and 16 threads on the smoke tables."""
+        with threadpool_limits(limits=1):
+            return self._fit(spec, train, val)
+
+    def _fit(self, spec: DetectorSpec | str, train: str | WindowSet, val: str | WindowSet) -> FittedDetector:
         spec = detector_spec(spec) if isinstance(spec, str) else spec
         tr, va = self.window_set(train), self.window_set(val)
         t0 = time.perf_counter()
@@ -534,6 +579,8 @@ class FeatureContext:
                     model, choices = self._fit_linear(X, y, Xv, y_val, spec, seed)
                 else:
                     raise ValueError("Bloom needs an expansion (E5: Bloom only with a KC layer)")
+            elif spec.readout == "bloom" and not spec.normalized and not self._codes_in_memory(spec.code_key, tr):
+                model, choices = self._fit_bloom_streamed(spec, tr, va, seed)
             else:
                 Z, Zv = self.codes(spec, tr), self.codes(spec, va)
                 m, k = self.code_width(spec.code_key)
@@ -570,6 +617,65 @@ class FeatureContext:
         else:
             raise KeyError(f"unknown detector kind {spec.kind!r}")
         return FittedDetector(spec, model, choices, time.perf_counter() - t0, tr.name, tr.n)
+
+    def _fit_bloom_streamed(self, spec: DetectorSpec, tr: WindowSet, va: WindowSet,
+                            seed: int) -> tuple[BloomReadout, dict[str, Any]]:
+        """The Bloom fit and its γ search for a training set whose codes are too large to hold (E3 folds: 19k-32k
+        windows at FlyHash-20 are 2.4-4.1 GB of codes, and ``BloomReadout.fit`` copies the balanced rows once per
+        γ), with results bit-identical to ``select_gamma`` + ``BloomReadout.fit`` on the materialised codes.
+
+        Why it is exact: the trained filter is F_c = γ^{n_c} (readout docstring), where n_c counts per cell the
+        class-c codes among the balanced rows ``readout.balance_indices(y, seed)``. Those counts are accumulated
+        over streamed code batches (integers, exact in float64; scipy's float32 column sum of the materialised code
+        is exact too below 2^24 rows), the filter is set through ``partial_fit`` on the 2 x m count matrix (one
+        row per class, so its column sum *is* n_c), and the bookkeeping attributes are set as ``fit`` sets them.
+        Every γ of the grid is scored on the validation set in one streamed pass; ties go to the first grid entry
+        as in ``readout._first_argmax``. The normalised variant (E6) is not streamed, because E6 trains on deepset
+        train; a normalised Bloom on a set too large to memoise still materialises its codes (the old path)."""
+        key = spec.code_key
+        m, k = self.code_width(key)
+        y, y_val = tr.labels, va.labels
+        idx = balance_indices(y, seed)
+        in_bal = np.zeros(tr.n, dtype=bool)
+        in_bal[idx] = True
+        masks = [in_bal & (y == c) for c in (0, 1)]
+        counts = np.zeros((2, m), dtype=np.float64)
+        for sl, Z in self.iter_codes(key, tr):
+            for c in (0, 1):
+                rows = np.flatnonzero(masks[c][sl])
+                if rows.size:
+                    counts[c] += np.asarray(Z[rows].sum(axis=0), dtype=np.float64).ravel()
+        count_code = sp.csr_matrix(counts.astype(np.float32))
+
+        def bloom(gamma: float) -> BloomReadout:
+            model = BloomReadout(m, k, gamma, seed_subsample=seed, normalized=False)
+            model.partial_fit(count_code, np.array([0, 1]))
+            model.class_counts_ = np.bincount(y, minlength=2)
+            model.balanced_index_ = idx
+            model.balanced_counts_ = np.bincount(y[idx], minlength=2)
+            model.n_seen_[:] = model.balanced_counts_
+            return model
+
+        if spec.gamma is not None:
+            gamma = float(spec.gamma)
+            model = bloom(gamma)
+            choices: dict[str, Any] = {"gamma": gamma, "gamma_source": "fixed"}
+        else:
+            grid = [float(g) for g in self.cfg.default["readout"]["bloom"]["gammas"]]
+            models = {g: bloom(g) for g in grid}
+            buf = {g: np.empty(va.n, dtype=np.float32) for g in grid}
+            batches = ([(slice(0, va.n), self.codes(key, va))] if self._codes_in_memory(key, va)
+                       else self.iter_codes(key, va))
+            for sl, Zv in batches:
+                for g in grid:
+                    buf[g][sl] = models[g].score(Zv)
+            table = {g: float(roc_auc_score(y_val, buf[g])) for g in grid}
+            gamma = grid[int(np.argmax(np.array([table[g] for g in grid], dtype=np.float64)))]
+            model = models[gamma]
+            choices = {"gamma": gamma, "gamma_source": "val", "gamma_table": {str(g): float(a) for g, a in table.items()},
+                       "val_auc_window": float(table[gamma])}
+        choices["balanced_counts"] = [int(c) for c in model.balanced_counts_]
+        return model, choices
 
     def _fit_linear(self, Z: Any, y: np.ndarray, Zv: Any, y_val: np.ndarray, spec: DetectorSpec,
                     seed: int) -> tuple[LinearReadout, dict[str, Any]]:

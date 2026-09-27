@@ -7,6 +7,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import pytest
 
 from flyguard.baselines.transformers_guard import GuardModel
@@ -15,11 +17,11 @@ from flyguard.eval.thresholds import fpr_target_for_pool
 from flyguard.eval.verdicts import CONFIRMED, INSUFFICIENT, PRECONDITION, REFUTED, STATUSES
 from flyguard.experiments import Context, read_result
 from flyguard.experiments.e0 import power_copy_path, run_e0, sizes_by_source
-from flyguard.experiments.e1 import hypothesis_inputs, run_e1
-from flyguard.experiments.results import number, power_path, result_path, summary_path, write_result
+from flyguard.experiments.e1 import hypothesis_inputs, roc_at, roc_tables, roc_vertices, run_e1
+from flyguard.experiments.results import number, power_path, result_path, summarize, summary_path, write_result
 from flyguard.experiments.run import build_parser, main as run_main, parse_seeds
-from flyguard.experiments.verdicts_run import (aggregate, ci_from_record, find_pair_key, verdicts_path,
-                                               write_verdicts)
+from flyguard.experiments.verdicts_run import (aggregate, build_verdicts, ci_from_record, find_pair_key,
+                                               verdicts_path, write_verdicts)
 from flyguard.io import atomic_write_json
 
 _spec = importlib.util.spec_from_file_location("e0e1_conftest", Path(__file__).with_name("conftest.py"))
@@ -132,6 +134,26 @@ def test_e1_table_thresholds_and_verdict_inputs(toy_cfg, troot, mctx, e1_paths):
     assert all(set(v) >= {"value", "source", "target", "n"} for v in th.values()) and len(th) >= 3 * 11
     assert th["tau_fpr/real_fly_bloom"]["source"] == "P_val" and th["tau90_dojo/regex"]["target"] == "tpr>=0.9"
     assert any("latency_guards=True" in n for n in r["notes"]) and r["timing"]["test_reads"] == []  # E0 read them already
+    roc, cells = pd.DataFrame(r["tables"]["roc"]), {tuple(k.split("/")[1:]) for k in nums if k.startswith("auc/")}
+    assert set(zip(roc["source"], roc["detector"])) == cells          # one curve per auc/<source>/<detector>
+    for (src, det), g in roc.groupby(["source", "detector"]):
+        g = g.sort_values("fpr")
+        assert g["tpr"].is_monotonic_increasing and g["tpr"].iloc[-1] == 1.0 and g["fpr"].iloc[0] == 0.0
+        assert np.trapezoid(g["tpr"], g["fpr"]) == pytest.approx(nums[f"auc/{src}/{det}"]["value"], abs=0.03)
+    pts = r["tables"]["roc_points"]
+    assert pts and all((p["source"], p["detector"]) in cells and 0 <= p["fpr"] <= 1 for p in pts)
+    assert "regex" in {p["detector"] for p in pts}                    # ТЗ 3.1: the regexes are a point on the ROC
+
+
+def test_roc_vertices_grid_and_points():
+    f, t, thr = roc_vertices([0.9, 0.8, 0.8, 0.5, 0.3, 0.1, np.nan], [1, 1, 0, 1, 0, 0, 1])   # NaN dropped
+    assert np.allclose(f, [0, 0, 1 / 3, 1 / 3, 2 / 3, 1]) and np.allclose(t, [0, 1 / 3, 2 / 3, 1, 1, 1])
+    assert np.trapezoid(t, f) == pytest.approx(5 / 6) and thr[0] == np.inf   # Mann-Whitney, the tie counted 1/2
+    assert np.allclose(roc_at(f, t, [0, 1 / 6, 1 / 3, 0.5, 1]), [1 / 3, 0.5, 1, 1, 1])   # vertical jump: upper end
+    df = pd.DataFrame({"label": [1, 1, 0, 0, 0], "regex": [1.0, 0.0, 1.0, 0.0, 0.0], "lr": [0.9, 0.7, 0.8, 0.1, 0.2]})
+    out = roc_tables({"deep": df, "notinject": df.assign(label=0)}, ["regex", "lr", "absent"], grid=(0.5,))
+    assert {(r["detector"], r["fpr"]) for r in out["roc"]} == {(d, g) for d in ("regex", "lr") for g in (0.0, 0.5, 1.0)}
+    assert out["roc_points"] == [{"source": "deep", "detector": "regex", "fpr": 1 / 3, "tpr": 0.5, "threshold": 1.0}]
 
 
 def test_hypothesis_inputs_tost_and_holm(toy_cfg):
@@ -203,6 +225,10 @@ def test_verdict_logic_and_seed_aggregation(tmp_path, toy_cfg):
             "diff/macro_auc/real_fly_bloom-tfidf_lr": number(-0.1, _ci(-0.1, -0.15, -0.05)),
             "diff/macro_auc/flyhash_bloom-tfidf_lr": number(-0.1, _ci(-0.1, -0.15, -0.05)),
             "val_auc/deep/real_fly_bloom": number(0.9), "val_macro_auc/real_fly_bloom": number(0.85),
+            "val_auc/deep/real_fly_linear": number(0.6),                   # secondary H2 row: its own gate fails
+            "diff/auc/deep/tfidf_lr-protectai_v2": number(0.0, _ci(0, -0.03, 0.03)),       # 95 % twins of diff90
+            "diff/auc/dojo/tfidf_lr-protectai_v2": number(0.0, _ci(0, -0.03, 0.03)),
+            "diff/macro_auc/real_fly_linear-lr_svd": number(0.0, _ci(0, -0.03, 0.03)),
             "diff/fpr_notinject/tau90_deep/real_fly_bloom-protectai_v2": number(0.0, _ci(0, -0.05, 0.05)),
             "diff/fpr_notinject/tau90_deep/protectai_v2-piguard": number(0.2, _ci(0.2, 0.1, 0.3))}
     bad = dict(good, **{"diff90/macro_auc/real_fly_linear-lr_svd": number(-0.2, _ci(-0.2, -0.3, -0.1, 0.9)),
@@ -215,9 +241,9 @@ def test_verdict_logic_and_seed_aggregation(tmp_path, toy_cfg):
                      {}, {}, [], root=root)
         write_result("E4", seed, {"diff90/macro_auc/real_fly_bloom-curveball_mean": number(0.01, _ci(0.01, -0.02, 0.03, 0.9),
                                                                                            reference=0.85, p_randomization=0.3),
+                                  "diff/macro_auc/real_fly_bloom-curveball_mean": number(0.01, _ci(0.01, -0.025, 0.035)),
                                   "diff90/macro_auc/real_fly_linear-curveball": number(0.1, _ci(0.1, 0.05, 0.15, 0.9)),
                                   "macro_auc/curveball_mean/real_fly_linear": number(0.8)}, {}, {}, [], root=root)
-    from flyguard.experiments.results import summarize
     for e in ("E1", "E2", "E4"):
         summarize(e, root=root)
     v = json.loads(write_verdicts(root, False, toy_cfg).read_text())
@@ -235,6 +261,24 @@ def test_verdict_logic_and_seed_aggregation(tmp_path, toy_cfg):
     env = v["H1a"]["ci_envelope"]["semantic"]["para"]
     assert env["low"] == 0.05 and env["high"] == 0.15 and env["descriptive_only"] and v["warnings"] == []
     assert v["H1b"]["real_fly"]["effect"]["equiv"] == pytest.approx(-0.1)   # seed mean of 0 and -0.2
+    # every TOST interval (90 %) has its 95 % twin of the same draws beside it (ТЗ: verdict with effect and 95 % CI)
+    assert (v["H3"]["ci_envelope"]["level"], v["H3"]["ci95_envelope"]["level"], v["H3"]["ci95_envelope"]["low"]) == (0.9, 0.95, -0.025)
+    tmpl = v["H1a"]["ci95_envelope"]["template"]["deep"]
+    assert v["H1a"]["ci_envelope"]["template"]["deep"]["level"] == 0.9 and (tmpl["level"], tmpl["high"]) == (0.95, 0.03)
+    assert v["H1b"]["real_fly"]["ci95_envelope"]["equiv"]["level"] == 0.95 and v["H1b"]["flyhash"]["ci95_envelope"]["equiv"] is None
+    assert v["H1b"]["real_fly"]["per_seed"]["0"]["ci95"]["full"]["level"] == 0.95 and v["H2"]["ci95_envelope"] == v["H2"]["ci_envelope"]
+    assert v["H2_secondary"]["real_fly_linear"]["per_seed"]["0"]["status"] == PRECONDITION     # its own val AUC 0.6
+    assert v["inputs"]["H2/real_fly_linear"]["val_auc_deep"] == "val_auc/deep/real_fly_linear"
+    # seeds: outside seeds.global or a stale config_hash never enter the modal status; stale E4 records count as missing
+    write_result("E1", 42, good, {}, {}, [], root=root)
+    for p in (write_result("E1", 2, good, {}, {}, [], root=root), result_path("E4", 1, root=root)):
+        atomic_write_json(p, {**json.loads(p.read_text()), "config_hash": "stale"})
+    for e in ("E1", "E4"):
+        summarize(e, root=root)
+    v2 = build_verdicts(root, False, toy_cfg)
+    assert v2["seeds"] == [0, 1] and set(v2["excluded_seeds"]) == {"2", "42"} == {str(x) for x in v2["sources"]["E1"]["unused_seeds"]}
+    assert v2["H3"]["per_seed"]["1"]["status"] == INSUFFICIENT and v2["sources"]["E4"]["unused_seeds"] == [1] and v2["H1a"]["n_seeds"] == 2
+    assert any("[1]" in w for w in v2["warnings"]) and any("общего config_hash" in w for w in v2["warnings"])
 
 
 def test_verdict_helpers():
@@ -250,7 +294,7 @@ def test_verdict_helpers():
 
 
 # ---------------------------------------------------------------------------------------------- freeze and CLI
-def test_e0_idempotency_and_freeze_rules(toy_cfg, troot, mctx, rec, gf, e0_out, e1_paths):
+def test_e0_idempotency_and_freeze_rules(toy_cfg, troot, mctx, rec, gf, e0_out, e1_paths, monkeypatch):
     again = run_e0(1, 0, root=troot, cfg=toy_cfg, ctx=mctx, access_log=rec, guard_factory=gf, power_overrides=POWER_SMALL)
     assert again["skipped"] and again["power"]["created_at"] == e0_out["power"]["created_at"]
     two = run_e0(2, 0, root=troot, cfg=toy_cfg, ctx=mctx, access_log=rec, guard_factory=gf, power_overrides=POWER_SMALL)
@@ -260,6 +304,14 @@ def test_e0_idempotency_and_freeze_rules(toy_cfg, troot, mctx, rec, gf, e0_out, 
     assert run_e0(2, 0, root=troot, cfg=toy_cfg, ctx=mctx, guard_factory=gf, power_overrides=POWER_SMALL)["skipped"]
     with pytest.raises(RuntimeError):
         run_e0(1, 0, root=troot, cfg=toy_cfg, ctx=mctx, guard_factory=gf, power_overrides=POWER_SMALL)
+    monkeypatch.setattr("flyguard.experiments.e0.config_hash", lambda root=None: "edited-after-freeze")
+    with pytest.raises(RuntimeError, match="DEVIATIONS"):                  # a frozen table is never re-frozen silently
+        run_e0(2, 0, root=troot, cfg=toy_cfg, ctx=mctx, guard_factory=gf, power_overrides=POWER_SMALL)
+    monkeypatch.undo()
+    forced = run_e0(2, 0, root=troot, cfg=toy_cfg, ctx=mctx, guard_factory=gf, power_overrides=POWER_SMALL, force=True)
+    old = forced["power"]["refrozen_over"]
+    assert old["reason"] == "force" and old["created_at"] == frozen["created_at"] and "power_frozen_" in old["path"]
+    assert json.loads((troot / old["path"]).read_text()) == frozen and read_result(forced["result_path"])["refrozen_over"] == old
     v = json.loads(write_verdicts(troot, False, toy_cfg).read_text())
     assert v["sources"]["power"]["frozen"] is True and not any("заморожен" in w for w in v["warnings"])
     with pytest.raises(ValueError):

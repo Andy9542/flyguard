@@ -462,3 +462,128 @@
 2026-09-26T18:59:28Z	test	data/paraphrases/paraphrases.csv	check_acceptance: Jaccard/stratum/judge columns and banned-word scan of the deep stratum (texts read by code only, never printed)
 2026-09-26T18:59:29Z	test	data/processed/smoke/windows.parquet	check_acceptance: dedup invariants (columns id/split/label/cluster/hash/meta only, no text)
 2026-09-26T18:59:29Z	test	data/processed/smoke/documents.parquet	check_acceptance: dedup invariants (columns id/split/label/cluster/hash/meta only, no text)
+2026-09-27T01:00:13Z	test	data/raw/deepset/test.parquet	flyguard.data.loaders.load_deepset: build documents
+2026-09-27T01:00:13Z	test	data/raw/bipia/text_attack_test.json	flyguard.data.loaders.bipia_attacks: email
+2026-09-27T01:00:13Z	test	data/raw/bipia/email/test.jsonl	flyguard.data.loaders.bipia_contexts: email
+2026-09-27T01:00:13Z	test	data/raw/bipia/text_attack_test.json	flyguard.data.loaders.bipia_attacks: table
+2026-09-27T01:00:13Z	test	data/raw/bipia/table/test.jsonl	flyguard.data.loaders.bipia_contexts: table
+2026-09-27T01:00:13Z	test	data/raw/bipia/code_attack_test.json	flyguard.data.loaders.bipia_attacks: code
+2026-09-27T01:00:13Z	test	data/raw/bipia/code/test.jsonl	flyguard.data.loaders.bipia_contexts: code
+2026-09-27T01:00:14Z	test	data/raw/notinject/NotInject_one.json	flyguard.data.loaders.load_notinject: build documents
+2026-09-27T01:00:14Z	test	data/raw/notinject/NotInject_two.json	flyguard.data.loaders.load_notinject: build documents
+2026-09-27T01:00:14Z	test	data/raw/notinject/NotInject_three.json	flyguard.data.loaders.load_notinject: build documents
+2026-09-27T01:00:17Z	external	data/raw/piguard_train/train.json	flyguard.data.audit.contamination_audit: third-party training set (PIGuard) read for the ТЗ 3.2 overlap counts; texts never printed
+2026-09-27T01:02:02Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(deep): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:02:02Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(deep): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:02:02Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(bipia): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:02:02Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(bipia): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:02:02Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(notinject): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:02:02Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(notinject): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:02:36Z	test	data/raw/deepset/test.parquet	flyguard.data.loaders.load_deepset: build documents
+2026-09-27T01:02:36Z	test	data/raw/bipia/text_attack_test.json	flyguard.data.loaders.bipia_attacks: email
+2026-09-27T01:02:36Z	test	data/raw/bipia/email/test.jsonl	flyguard.data.loaders.bipia_contexts: email
+2026-09-27T01:02:37Z	test	data/raw/bipia/text_attack_test.json	flyguard.data.loaders.bipia_attacks: table
+2026-09-27T01:02:37Z	test	data/raw/bipia/table/test.jsonl	flyguard.data.loaders.bipia_contexts: table
+2026-09-27T01:02:37Z	test	data/raw/bipia/code_attack_test.json	flyguard.data.loaders.bipia_attacks: code
+2026-09-27T01:02:37Z	test	data/raw/bipia/code/test.jsonl	flyguard.data.loaders.bipia_contexts: code
+2026-09-27T01:02:37Z	test	data/raw/notinject/NotInject_one.json	flyguard.data.loaders.load_notinject: build documents
+2026-09-27T01:02:37Z	test	data/raw/notinject/NotInject_two.json	flyguard.data.loaders.load_notinject: build documents
+2026-09-27T01:02:37Z	test	data/raw/notinject/NotInject_three.json	flyguard.data.loaders.load_notinject: build documents
+2026-09-27T01:02:37Z	test	data/traces/agentdojo/deepseek-v4-pro/banking	agentdojo_io.extract agentdojo: 160 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-27T01:02:37Z	test	data/traces/agentdojo/deepseek-v4-pro/slack	agentdojo_io.extract agentdojo: 126 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-27T01:02:37Z	test	data/traces/agentdojo/deepseek-v4-pro/travel	agentdojo_io.extract agentdojo: 160 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-27T01:02:37Z	test	data/traces/agentdojo/deepseek-v4-pro/workspace	agentdojo_io.extract agentdojo: 600 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-27T01:02:59Z	test	data/traces/agentdyn/deepseek-v4-pro/dailylife	agentdojo_io.extract agentdyn: 90 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-27T01:02:59Z	test	data/traces/agentdyn/deepseek-v4-pro/github	agentdojo_io.extract agentdyn: 83 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-27T01:02:59Z	test	data/traces/agentdyn/deepseek-v4-pro/shopping	agentdojo_io.extract agentdyn: 83 trace logs parsed into step documents (test tasks included; tool outputs never printed)
+2026-09-27T01:03:06Z	test	data/paraphrases/paraphrases.csv	flyguard.data.loaders.load_paraphrases: build documents
+2026-09-27T01:03:17Z	external	data/raw/piguard_train/train.json	flyguard.data.audit.contamination_audit: third-party training set (PIGuard) read for the ТЗ 3.2 overlap counts; texts never printed
+2026-09-27T01:05:04Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(deep): E0 stage 2 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:05:04Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(deep): E0 stage 2 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:05:04Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(bipia): E0 stage 2 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:05:04Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(bipia): E0 stage 2 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:05:04Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dojo): E0 stage 2 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:05:04Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dojo): E0 stage 2 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:05:04Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dyn): E0 stage 2 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:05:04Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dyn): E0 stage 2 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:05:04Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(para): E0 stage 2 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:05:04Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(para): E0 stage 2 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:05:04Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(notinject): E0 stage 2 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:05:04Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(notinject): E0 stage 2 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:06:03Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(deep): E1 seed=0
+2026-09-27T01:06:03Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(deep): E1 seed=0
+2026-09-27T01:06:03Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(bipia): E1 seed=0
+2026-09-27T01:06:03Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(bipia): E1 seed=0
+2026-09-27T01:06:04Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dojo): E1 seed=0
+2026-09-27T01:06:04Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dojo): E1 seed=0
+2026-09-27T01:06:04Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dyn): E1 seed=0
+2026-09-27T01:06:04Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dyn): E1 seed=0
+2026-09-27T01:06:06Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(para): E1 seed=0
+2026-09-27T01:06:06Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(para): E1 seed=0
+2026-09-27T01:06:07Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(notinject): E1 seed=0
+2026-09-27T01:06:07Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(notinject): E1 seed=0
+2026-09-27T01:07:06Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(deep): E4 seed=0
+2026-09-27T01:07:06Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(deep): E4 seed=0
+2026-09-27T01:07:06Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(bipia): E4 seed=0
+2026-09-27T01:07:06Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(bipia): E4 seed=0
+2026-09-27T01:07:06Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dojo): E4 seed=0
+2026-09-27T01:07:06Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dojo): E4 seed=0
+2026-09-27T01:07:06Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dyn): E4 seed=0
+2026-09-27T01:07:06Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dyn): E4 seed=0
+2026-09-27T01:07:07Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(para): E4 seed=0
+2026-09-27T01:07:07Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(para): E4 seed=0
+2026-09-27T01:09:02Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(deep): E5 seed=0
+2026-09-27T01:09:02Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(deep): E5 seed=0
+2026-09-27T01:09:03Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(bipia): E5 seed=0
+2026-09-27T01:09:03Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(bipia): E5 seed=0
+2026-09-27T01:09:04Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dojo): E5 seed=0
+2026-09-27T01:09:04Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dojo): E5 seed=0
+2026-09-27T01:09:05Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dyn): E5 seed=0
+2026-09-27T01:09:05Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dyn): E5 seed=0
+2026-09-27T01:09:10Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(para): E5 seed=0
+2026-09-27T01:09:10Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(para): E5 seed=0
+2026-09-27T01:09:34Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dojo#e3): E3 seed=0
+2026-09-27T01:09:34Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dojo#e3): E3 seed=0
+2026-09-27T01:11:03Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(deep): E2 seed=0
+2026-09-27T01:11:03Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(deep): E2 seed=0
+2026-09-27T01:11:05Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(bipia): E2 seed=0
+2026-09-27T01:11:05Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(bipia): E2 seed=0
+2026-09-27T01:11:07Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dojo): E2 seed=0
+2026-09-27T01:11:07Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dojo): E2 seed=0
+2026-09-27T01:11:08Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dyn): E2 seed=0
+2026-09-27T01:11:08Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dyn): E2 seed=0
+2026-09-27T01:11:12Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(para): E2 seed=0
+2026-09-27T01:11:12Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(para): E2 seed=0
+2026-09-27T01:12:05Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(deep): E6 seed=0
+2026-09-27T01:12:05Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(deep): E6 seed=0
+2026-09-27T01:12:06Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(bipia): E6 seed=0
+2026-09-27T01:12:06Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(bipia): E6 seed=0
+2026-09-27T01:12:07Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dojo): E6 seed=0
+2026-09-27T01:12:07Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dojo): E6 seed=0
+2026-09-27T01:12:09Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dyn): E6 seed=0
+2026-09-27T01:12:09Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dyn): E6 seed=0
+2026-09-27T01:12:14Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(para): E6 seed=0
+2026-09-27T01:12:14Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(para): E6 seed=0
+2026-09-27T01:12:15Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(notinject): E6 seed=0
+2026-09-27T01:12:15Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(notinject): E6 seed=0
+2026-09-27T01:12:32Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(bipia#e6): E6 seed=0
+2026-09-27T01:12:32Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(bipia#e6): E6 seed=0
+2026-09-27T01:13:26Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dyn#contract_val): contract seed=0
+2026-09-27T01:13:26Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dyn#contract_val): contract seed=0
+2026-09-27T01:13:27Z	test	data/processed/smoke/windows.parquet	experiments.context.load_test_windows(dyn#contract_test): contract seed=0
+2026-09-27T01:13:27Z	test	data/processed/smoke/documents.parquet	experiments.context.load_test_windows(dyn#contract_test): contract seed=0
+2026-09-27T01:14:01Z	test	data/paraphrases/paraphrases.csv	check_acceptance: Jaccard/stratum/judge columns and banned-word scan of the deep stratum (texts read by code only, never printed)
+2026-09-27T01:14:01Z	test	data/processed/smoke/windows.parquet	check_acceptance: dedup invariants (columns id/split/label/cluster/hash/meta only, no text)
+2026-09-27T01:14:01Z	test	data/processed/smoke/documents.parquet	check_acceptance: dedup invariants (columns id/split/label/cluster/hash/meta only, no text)
+2026-09-27T01:21:12Z	test	data/processed/smoke/windows.parquet	guard prescoring (protectai_v2): scores cached by text hash, no metric computed
+2026-09-27T01:21:12Z	test	data/processed/smoke/windows.parquet	guard prescoring (prompt_guard_2): scores cached by text hash, no metric computed
+2026-09-27T01:21:12Z	test	data/processed/smoke/windows.parquet	guard prescoring (piguard): scores cached by text hash, no metric computed
+2026-09-27T01:25:22Z	test	data/processed/smoke/documents.parquet	guard prescoring (prompt_guard_2): scores cached by text hash, no metric computed (512-token windows of E6)
+2026-09-27T01:25:33Z	test	data/processed/smoke/documents.parquet	guard prescoring (protectai_v2): scores cached by text hash, no metric computed (512-token windows of E6)
+2026-09-27T01:25:33Z	test	data/processed/smoke/documents.parquet	guard prescoring (piguard): scores cached by text hash, no metric computed (512-token windows of E6)
+2026-09-27T01:32:55Z	test	/tmp/claude-1000/-home-ubuntu-projects-flyguard/8d58349d-5f53-407e-ae70-4d0e426fa951/scratchpad/stage1_root/data/processed/windows.parquet	experiments.context.load_test_windows(deep): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:32:55Z	test	/tmp/claude-1000/-home-ubuntu-projects-flyguard/8d58349d-5f53-407e-ae70-4d0e426fa951/scratchpad/stage1_root/data/processed/documents.parquet	experiments.context.load_test_windows(deep): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:32:55Z	test	/tmp/claude-1000/-home-ubuntu-projects-flyguard/8d58349d-5f53-407e-ae70-4d0e426fa951/scratchpad/stage1_root/data/processed/windows.parquet	experiments.context.load_test_windows(bipia): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:32:55Z	test	/tmp/claude-1000/-home-ubuntu-projects-flyguard/8d58349d-5f53-407e-ae70-4d0e426fa951/scratchpad/stage1_root/data/processed/documents.parquet	experiments.context.load_test_windows(bipia): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:32:55Z	test	/tmp/claude-1000/-home-ubuntu-projects-flyguard/8d58349d-5f53-407e-ae70-4d0e426fa951/scratchpad/stage1_root/data/processed/windows.parquet	experiments.context.load_test_windows(notinject): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T01:32:55Z	test	/tmp/claude-1000/-home-ubuntu-projects-flyguard/8d58349d-5f53-407e-ae70-4d0e426fa951/scratchpad/stage1_root/data/processed/documents.parquet	experiments.context.load_test_windows(notinject): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)

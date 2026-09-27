@@ -13,7 +13,8 @@ NaN -> null) and carries ``config_hash`` (:func:`flyguard.config.config_hash`) a
 Result file (one per experiment and global seed)::
 
     {"experiment": "E1", "seed": 0, "config_hash": "...", "git_commit": "...", "seeds": {children}, "smoke": false,
-     "created_at": "...Z", "timing": {...}, "numbers": {key: number}, "tables": {name: [row dicts]},
+     "created_at": "...Z", "timing": {..., "threads": {env, cpu_count, pools}}, "numbers": {key: number},
+     "tables": {name: [row dicts]},
      "thresholds": {name: {value, source, target, n, ...}}, "notes": [str]}
 
 A *number* is ``{"value", "ci_low", "ci_high", "n", "note"}`` (design §9) plus optional ``level`` (CI level, 0.95
@@ -59,6 +60,7 @@ are recorded under ``config_hashes`` and flagged in ``warnings`` so that the rep
 from __future__ import annotations
 
 import math
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -97,6 +99,26 @@ def power_path(root: Path = ROOT, smoke: bool = False) -> Path:
 
 def _stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+THREAD_ENV = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")
+
+
+def thread_info() -> dict[str, Any]:
+    """The thread counts in force when a result was computed (``timing.threads`` of every result file).
+
+    Why: floating-point reductions in BLAS/OpenMP depend on the thread count, and ``run_all.sh --jobs N`` sets it to
+    ``nproc / N`` for E1–E6 only (ASSUMPTIONS A39), so a result cannot be re-derived bit for bit without knowing it.
+    The engine pins the thread-sensitive steps (the randomized SVD of N51-svd and every detector fit) to one
+    thread; this record makes any remaining dependence (guard inference, code outside the engine) auditable. No file paths: only the variables, the CPU count and, per loaded
+    pool, its API, implementation, version and thread count."""
+    try:
+        from threadpoolctl import threadpool_info
+
+        pools = [{k: p.get(k) for k in ("user_api", "internal_api", "version", "num_threads")} for p in threadpool_info()]
+    except Exception:  # noqa: BLE001 - provenance only; never fail a result write over it
+        pools = []
+    return {"env": {k: os.environ.get(k) for k in THREAD_ENV}, "cpu_count": os.cpu_count(), "pools": pools}
 
 
 def _finite(x: Any) -> float | None:
@@ -159,7 +181,8 @@ def write_result(experiment: str, seed: int, numbers: Mapping[str, Any], tables:
     """Write ``results/<E>/<seed>.json`` (design §9 format) atomically; returns the path.
 
     ``numbers`` values may be plain floats (wrapped by :func:`number`) or number dicts; keys are validated.
-    ``config_hash`` and ``git_commit`` are taken at write time from the repository at ``root``.
+    ``config_hash`` and ``git_commit`` are taken at write time from the repository at ``root``; ``timing`` gains
+    ``threads`` (:func:`thread_info`) unless the caller already recorded it.
     """
     nums: dict[str, Any] = {}
     for key, val in numbers.items():
@@ -170,7 +193,7 @@ def write_result(experiment: str, seed: int, numbers: Mapping[str, Any], tables:
     payload: dict[str, Any] = {
         "experiment": str(experiment), "seed": int(seed), "config_hash": config_hash(Path(root)),
         "git_commit": git_commit(Path(root)), "seeds": dict(seeds or {}), "smoke": bool(smoke),
-        "created_at": _stamp(), "timing": dict(timing or {}), "numbers": nums,
+        "created_at": _stamp(), "timing": {"threads": thread_info(), **dict(timing or {})}, "numbers": nums,
         "tables": {str(k): [dict(r) for r in v] for k, v in tables.items()},
         "thresholds": {str(k): (dict(v) if isinstance(v, Mapping) else v) for k, v in thresholds.items()},
         "notes": [str(n) for n in notes],

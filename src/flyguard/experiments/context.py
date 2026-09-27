@@ -2,11 +2,15 @@
 
 Test discipline (ТЗ "Честность эксперимента", CLAUDE.md): the non-test frames (``documents``, ``windows``) are read
 from the parquet files with a ``split != "test"`` filter, so no test row is ever in memory until
-:meth:`Context.load_test_windows` is called. That method is the *only* accessor of test windows and documents: it
-reads one source's test rows, memoises them and journals the read once per source through
+:meth:`Context.load_test_windows` is called. That method is the only accessor of test windows and documents in the
+experiment runs: it reads one source's test rows, memoises them and journals the read once per source through
 ``flyguard.netlog.log_data_access(path, "test", purpose)`` (``access_log`` is injectable so tests never touch
 ``logs/data_access.log``). Everything a validation choice may see -- train, validation, C_unl, P_val -- comes from
-the non-test frames.
+the non-test frames. Two other journaled readers exist: :attr:`Context.episodes` (``episodes.parquet`` holds the
+classes, security/utility and step indices of test episodes; it is read lazily on first access, which only the
+contract run makes, and journaled as a test read) and the guard prescoring stage
+(:mod:`flyguard.experiments.prescore`, which scores every window and E6 document for the text-hash cache, computes
+no metric and journals its own reads).
 
 Roles (ТЗ 1.8–1.10, ``splits.json`` / ``pools.json``):
 
@@ -81,12 +85,22 @@ class Context:
         self.windows: pd.DataFrame = _read_table(self.windows_path, nontest).reset_index(drop=True)
         if (self.documents["split"] == "test").any() or (self.windows["split"] == "test").any():
             raise RuntimeError("test rows leaked into the non-test frames")
-        self.episodes: pd.DataFrame | None = (_read_table(self.episodes_path, None)
-                                              if self.episodes_path.exists() else None)
         self._test_windows: dict[str, pd.DataFrame] = {}
         self._test_documents: dict[str, pd.DataFrame] = {}
         self.test_reads: list[tuple[str, str]] = []
         self._connectome: tuple | None = None
+
+    @cached_property
+    def episodes(self) -> pd.DataFrame | None:
+        """``episodes.parquet`` (design §2), read on first access and journaled as a test read: it carries the
+        episode class, security, utility, injection step and first harmful step of the contract-test and E1-test
+        episodes (no text). Only the contract run needs it, so E0–E6 never open the file; ``None`` without it."""
+        if not self.episodes_path.exists():
+            return None
+        self._access_log(self.episodes_path, "test",
+                         "experiments.context.episodes: episode metadata (classes, security/utility, steps; no text) "
+                         "for the comparison contract")
+        return _read_table(self.episodes_path, None)
 
     # -- sizes and ids (no data read) -------------------------------------------------------------------------------
     @property
@@ -164,7 +178,8 @@ class Context:
     # -- the test door ----------------------------------------------------------------------------------------------
     def load_test_windows(self, source: str, purpose: str = "", doc_ids: Iterable[str] | None = None,
                           name: str | None = None) -> pd.DataFrame:
-        """The ONLY accessor of test windows (design_experiments §1): reads the test rows of ``source`` from
+        """The only accessor of test windows in the experiment runs (design_experiments §1; the separate prescore
+        stage journals its own read): reads the test rows of ``source`` from
         ``windows.parquet`` and ``documents.parquet``, memoises them and journals the read once per source with
         ``log_data_access(path, "test", purpose)``. By default the rows are the ``e1.test[source]`` documents;
         ``doc_ids`` with a ``name`` selects another test-only list of that source under its own memo key (E6's

@@ -11,7 +11,8 @@ Inputs (per global seed, from ``results/<E>/summary.json`` -> ``numbers[key].per
   and ``diff90/macro_auc/flyhash_linear-tfidf_lr`` + ``macro_auc/tfidf_lr`` (H1b i), ``diff/macro_auc/<fly>_bloom-
   tfidf_lr`` (H1b ii, full training), ``val_auc/deep/real_fly_bloom`` and ``diff/fpr_notinject/tau90_deep/
   real_fly_bloom-protectai_v2`` / ``.../protectai_v2-piguard`` (H2; ``real_fly_linear`` reported as secondary),
-  ``val_macro_auc/real_fly_bloom`` (H3 precondition).
+  ``val_macro_auc/real_fly_bloom`` (H3 precondition). H2's secondary row (``real_fly_linear``) is gated by that
+  fly's own ``val_auc/deep/real_fly_linear``.
 * **E2** (optional, H1b ii few-shot): ``diff/macro_auc/shots<k>/<fly>_bloom-knn1`` for k in {1, 10} -- the 95 %
   paired interval of macroAUC(Bloom fly at k examples per class) − macroAUC(kNN(1) at k examples). Other spellings
   of the shots segment (``shot1``, ``1shot``, ``shots=1``, ``n1``, a bare ``1``, before or after the pair) are found
@@ -25,8 +26,22 @@ Inputs (per global seed, from ``results/<E>/summary.json`` -> ``numbers[key].per
 * ``results/power.json`` (required; the E0 gate of :mod:`flyguard.eval.verdicts` is mandatory). A file that is not
   frozen (stage 1) only adds a warning: the verdicts are then preliminary.
 
+95 % intervals beside the TOST intervals. The TOST rows (H1a template half, H1b(i), H3) are decided on the 90 %
+interval (``diff90/...``, ТЗ Этап 4 "Статистика"), which the verdict stores as ``ci``; the ТЗ also asks for every
+verdict with its effect and 95 % CI («Задача выполнена», item 5). The ``diff/...`` record of the same draws (95 %)
+is therefore attached to every TOST row as ``diff_ci95`` and each per-seed verdict carries ``ci95``: the tree of
+``ci`` with every 90 % leaf replaced by its 95 % twin (leaves that are already 95 % are copied). The aggregate
+carries ``ci95_envelope`` beside ``ci_envelope``; every leaf of both has its ``level``.
+
 Keys the summaries do not have produce "не хватило данных" naming the key, never an exception, so a partial run
 (E1 only) still yields a complete ``verdicts.json``.
+
+Seeds used. Only E1 seeds that belong to ``seeds.global`` and whose seed file carries the current ``config_hash``
+enter the verdicts (``summary.config_hashes``); the others are listed under ``excluded_seeds`` with the reason and
+flagged in ``warnings``, so a stale or out-of-plan seed left on disk by a ``--seeds`` / ``--jobs`` rerun cannot enter
+the modal status. E2 / E4 records of a seed whose file has another hash are treated as missing for that seed.
+``sources.<E>.unused_seeds`` lists the seeds of each summary whose records were not read. A summary without a
+common hash (mixed seed files) or with its own warnings is flagged too.
 
 Seeds. The verdict functions take one interval each; the experiments run ten global seeds and :mod:`results`
 deliberately offers no averaged interval (a mean of percentile bounds is not an interval). The primitive is
@@ -47,6 +62,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from flyguard.config import ROOT, Configs, config_hash, git_commit, load_configs
+from flyguard.eval.bootstrap import as_ci
 from flyguard.eval.verdicts import (CONFIRMED, INSUFFICIENT, PRECONDITION, REFUTED, Verdict, verdict_h1a,
                                     verdict_h1b, verdict_h2, verdict_h3)
 from flyguard.experiments import results as results_mod
@@ -54,7 +70,8 @@ from flyguard.io import atomic_write_json, read_json
 
 STATUS_RANK = {INSUFFICIENT: 0, PRECONDITION: 1, REFUTED: 2, CONFIRMED: 3}   # lower = more conservative
 AGGREGATE_RULE = ("modal status over the global seeds; ties -> the more conservative status; effect = seed mean; "
-                  "ci_envelope = [min low, max high] over seeds (descriptive only)")
+                  "ci_envelope = [min low, max high] over seeds of the intervals the rule used (90 % for TOST rows); "
+                  "ci95_envelope = the same over the 95 % intervals (descriptive only)")
 LEXICAL = "tfidf_lr"
 H1A_TEMPLATE = ("deep", "dojo")
 H1A_SEMANTIC = {"para": "para_deep", "bipia": "bipia", "dyn": "dyn"}
@@ -82,6 +99,9 @@ class Summary:
         self.numbers: dict[str, Any] = dict(data.get("numbers") or {})
         self.seeds: list[int] = [int(s) for s in data.get("seeds") or []]
         self.config_hash = data.get("config_hash")
+        self.config_hashes: dict[int, Any] = {int(s): h for s, h in (data.get("config_hashes") or {}).items()}
+        self.warnings: list[str] = [str(w) for w in data.get("warnings") or []]
+        self.hidden: set[int] = set()   # seeds whose records are treated as missing (stale config_hash)
 
     @classmethod
     def load(cls, experiment: str, root: Path, smoke: bool) -> "Summary | None":
@@ -90,8 +110,12 @@ class Summary:
             return None
         return cls(path, read_json(path))
 
+    def seed_hash(self, seed: int) -> Any:
+        """The ``config_hash`` of one seed file (the summary's common hash for a summary without the per-seed map)."""
+        return self.config_hashes.get(int(seed), None if self.config_hashes else self.config_hash)
+
     def rec(self, key: str | None, seed: int) -> dict[str, Any] | None:
-        if key is None:
+        if key is None or int(seed) in self.hidden:
             return None
         return (self.numbers.get(key) or {}).get("per_seed", {}).get(str(int(seed)))
 
@@ -114,6 +138,14 @@ def ci_from_record(rec: Mapping[str, Any] | None, level: float | None = None) ->
         if rec.get(k) is not None:
             out[k] = int(rec[k])
     return out
+
+
+def ci95_dict(d: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """A 95 % interval in the verdicts' CI-dict shape (``CI.to_dict``), ``None`` without finite bounds."""
+    if d is None:
+        return None
+    c = as_ci(d)
+    return c.to_dict() if math.isfinite(c.low) and math.isfinite(c.high) else None
 
 
 def find_pair_key(keys: Sequence[str], prefix: str, metric: str, a: str, b: str | None,
@@ -148,8 +180,10 @@ def h1a_inputs(e1: Summary, seed: int, comparator: str) -> dict[str, Any]:
     keys: dict[str, str | None] = {}
     for s in H1A_TEMPLATE:
         dk, rk = f"diff90/auc/{s}/{LEXICAL}-{comparator}", f"auc/{s}/{comparator}"
-        template[s] = {"diff_ci90": ci_from_record(e1.rec(dk, seed), 0.90), "reference": e1.value(rk, seed)}
-        keys[f"template/{s}"] = dk
+        dk95 = f"diff/auc/{s}/{LEXICAL}-{comparator}"
+        template[s] = {"diff_ci90": ci_from_record(e1.rec(dk, seed), 0.90), "reference": e1.value(rk, seed),
+                       "diff_ci95": ci_from_record(e1.rec(dk95, seed))}
+        keys[f"template/{s}"], keys[f"template95/{s}"] = dk, dk95
     semantic: dict[str, Any] = {}
     for s, src in H1A_SEMANTIC.items():
         dk = f"diff/auc/{src}/{comparator}-{LEXICAL}"
@@ -164,6 +198,7 @@ def h1b_inputs(e1: Summary, e2: Summary | None, seed: int) -> dict[str, Any]:
     out: dict[str, Any] = {"keys": {}}
     for variant, (linear, bloom, ref) in H1B_VARIANTS.items():
         ek, rk, fk = f"diff90/macro_auc/{linear}-{ref}", f"macro_auc/{ref}", f"diff/macro_auc/{bloom}-{LEXICAL}"
+        ek95 = f"diff/macro_auc/{linear}-{ref}"
         fewshot: dict[str, Any] = {}
         for k in ("1", "10"):
             key = None
@@ -172,19 +207,24 @@ def h1b_inputs(e1: Summary, e2: Summary | None, seed: int) -> dict[str, Any]:
                                     ["|".join(t.format(k=k) for t in SHOT_TOKENS)])
             fewshot[k] = {"diff_ci95": ci_from_record(e2.rec(key, seed)) if (e2 is not None and key) else None}
             out["keys"][f"{variant}/fewshot/{k}"] = key or f"E2: diff/macro_auc/shots{k}/{bloom}-knn1 (missing)"
-        out[variant] = {"equiv": {"diff_ci90": ci_from_record(e1.rec(ek, seed), 0.90), "reference": e1.value(rk, seed)},
+        out[variant] = {"equiv": {"diff_ci90": ci_from_record(e1.rec(ek, seed), 0.90), "reference": e1.value(rk, seed),
+                                  "diff_ci95": ci_from_record(e1.rec(ek95, seed))},
                         "fewshot": fewshot, "full": {"diff_ci95": ci_from_record(e1.rec(fk, seed))}}
         out["keys"][f"{variant}/equiv"], out["keys"][f"{variant}/full"] = ek, fk
+        out["keys"][f"{variant}/equiv95"] = ek95
     return out
 
 
 def h2_inputs(e1: Summary, seed: int, fly: str, comparator: str) -> dict[str, Any]:
+    """H2 inputs of one fly row; the precondition is that fly's own deepset validation AUC (the secondary linear row
+    is not gated by the Bloom fly's AUC)."""
     k1 = f"diff/fpr_notinject/tau90_deep/{fly}-{comparator}"
     k2 = f"diff/fpr_notinject/tau90_deep/{comparator}-piguard"
-    return {"val_auc_deep": e1.value(f"val_auc/deep/{H3_PRIMARY}", seed),
+    kv = f"val_auc/deep/{fly}"
+    return {"val_auc_deep": e1.value(kv, seed),
             "fly_vs_protectai": {"diff_ci95": ci_from_record(e1.rec(k1, seed))},
             "protectai_vs_piguard": {"diff_ci95": ci_from_record(e1.rec(k2, seed))},
-            "keys": {"fly_vs_protectai": k1, "protectai_vs_piguard": k2, "val_auc_deep": f"val_auc/deep/{H3_PRIMARY}"}}
+            "keys": {"fly_vs_protectai": k1, "protectai_vs_piguard": k2, "val_auc_deep": kv}}
 
 
 def _h3_row(e4: Summary | None, det: str, seed: int) -> tuple[dict[str, Any] | None, str]:
@@ -204,7 +244,11 @@ def _h3_row(e4: Summary | None, det: str, seed: int) -> tuple[dict[str, Any] | N
     p = rec.get("p_randomization", rec.get("p_rand"))
     if p is None:
         p = e4.value(f"p_randomization/macro_auc/{det}", seed)
-    return {"diff_ci90": ci_from_record(rec, 0.90), "reference": ref, "p_randomization": p}, key
+    key95 = "diff/" + key[len("diff90/"):]
+    if key95 not in e4.numbers:
+        key95 = find_pair_key(e4.keys(), "diff", "macro_auc", det, "~curveball")
+    return {"diff_ci90": ci_from_record(rec, 0.90), "reference": ref, "p_randomization": p,
+            "diff_ci95": ci_from_record(e4.rec(key95, seed))}, key
 
 
 def h3_inputs(e1: Summary, e4: Summary | None, seed: int) -> dict[str, Any]:
@@ -258,10 +302,32 @@ def _envelope_tree(trees: Sequence[Any]) -> Any:
     return None
 
 
-def aggregate(per_seed: Mapping[int, Verdict], hypothesis: str) -> dict[str, Any]:
-    """The aggregate entry of ``verdicts.json`` for one hypothesis (module docstring, "Seeds")."""
+def ci95_tree(hypothesis: str, v: Verdict, inp: Mapping[str, Any], variant: str | None = None) -> Any:
+    """``v.ci`` with every 90 % (TOST) leaf replaced by the 95 % interval of the same draws, which the inputs carry
+    as ``diff_ci95`` (module docstring); leaves that are already 95 % are copied, a missing twin is ``None``."""
+    ci = v.ci
+    if ci is None:
+        return None
+    if hypothesis == "H1a":
+        template = inp.get("template") or {}
+        return {"template": {s: ci95_dict((template.get(s) or {}).get("diff_ci95"))
+                             for s in (ci.get("template") or {})},
+                "semantic": dict(ci.get("semantic") or {})}
+    if hypothesis == "H1b":
+        equiv = ((inp.get(variant) or {}).get("equiv") or {}).get("diff_ci95") if ci.get("equiv") is not None else None
+        return {**ci, "equiv": ci95_dict(equiv)}
+    if hypothesis == "H3":
+        return ci95_dict((inp.get("primary") or {}).get("diff_ci95"))
+    return ci   # H2: both intervals of the rule are 95 % already
+
+
+def aggregate(per_seed: Mapping[int, Verdict], hypothesis: str, ci95: Mapping[int, Any] | None = None,
+              empty_reason: str | None = None) -> dict[str, Any]:
+    """The aggregate entry of ``verdicts.json`` for one hypothesis (module docstring, "Seeds"). ``ci95`` maps a
+    seed to its :func:`ci95_tree`; it adds ``ci95`` to every per-seed verdict and ``ci95_envelope``."""
     if not per_seed:
-        return {"hypothesis": hypothesis, "status": INSUFFICIENT, "reason": "нет ни одного сида с результатами",
+        return {"hypothesis": hypothesis, "status": INSUFFICIENT,
+                "reason": empty_reason or "нет ни одного сида с результатами",
                 "n_seeds": 0, "n_seeds_by_status": {}, "per_seed": {}, "aggregate_rule": AGGREGATE_RULE}
     counts = Counter(v.status for v in per_seed.values())
     top = max(counts.values())
@@ -270,7 +336,7 @@ def aggregate(per_seed: Mapping[int, Verdict], hypothesis: str) -> dict[str, Any
     rep = with_status[len(with_status) // 2]
     reason = (f"{status} в {counts[status]} из {len(per_seed)} сидов ({dict(sorted(counts.items()))}); "
               f"сид {rep}: {per_seed[rep].reason}")
-    return {
+    out = {
         "hypothesis": hypothesis, "status": status, "reason": reason,
         "effect": _mean_tree([v.effect for v in per_seed.values()]),
         "ci_envelope": _envelope_tree([v.ci for v in per_seed.values()]),
@@ -278,13 +344,39 @@ def aggregate(per_seed: Mapping[int, Verdict], hypothesis: str) -> dict[str, Any
         "representative_seed": int(rep), "aggregate_rule": AGGREGATE_RULE,
         "per_seed": {str(s): per_seed[s].to_dict() for s in sorted(per_seed)},
     }
+    if ci95 is not None:
+        out["ci95_envelope"] = _envelope_tree([ci95.get(s) for s in per_seed])
+        for s in per_seed:
+            out["per_seed"][str(s)]["ci95"] = ci95.get(s)
+    return out
 
 
 # ----------------------------------------------------------------------------------------------------------------
 # Build and write
 # ----------------------------------------------------------------------------------------------------------------
-def _per_seed(seeds: Sequence[int], fn: Callable[[int], Verdict]) -> dict[int, Verdict]:
-    return {int(s): fn(int(s)) for s in seeds}
+def _per_seed(seeds: Sequence[int], fn: Callable[[int], tuple[Verdict, Any]]
+              ) -> tuple[dict[int, Verdict], dict[int, Any]]:
+    """``fn(seed) -> (verdict, ci95 tree)`` over ``seeds`` -> ``({seed: verdict}, {seed: ci95 tree})``."""
+    pairs = {int(s): fn(int(s)) for s in seeds}
+    return {s: v for s, (v, _) in pairs.items()}, {s: c for s, (_, c) in pairs.items()}
+
+
+def select_seeds(e1: Summary, cfg: Configs, current: str) -> tuple[list[int], dict[str, str]]:
+    """The E1 seeds the verdicts use and ``{seed: reason}`` for the excluded ones (module docstring, "Seeds used"):
+    a seed must be in ``seeds.global`` and its seed file must carry the current ``config_hash``."""
+    configured = {int(s) for s in cfg.default["seeds"]["global"]}
+    used: list[int] = []
+    excluded: dict[str, str] = {}
+    for s in e1.seeds:
+        h = e1.seed_hash(s)
+        if s not in configured:
+            excluded[str(s)] = "сид вне seeds.global"
+        elif h != current:
+            excluded[str(s)] = ("у файла сида нет config_hash" if h is None
+                                else "config_hash файла сида отличается от текущего")
+        else:
+            used.append(int(s))
+    return used, excluded
 
 
 def build_verdicts(root: Path = ROOT, smoke: bool = False, cfg: Configs | None = None) -> dict[str, Any]:
@@ -300,15 +392,32 @@ def build_verdicts(root: Path = ROOT, smoke: bool = False, cfg: Configs | None =
         raise FileNotFoundError(f"{results_mod.summary_path('E1', smoke, root)} is missing: run E1 first")
     e2, e4 = Summary.load("E2", root, smoke), Summary.load("E4", root, smoke)
     comparator = str(cfg.default["baselines"]["transformers"]["comparator"])
-    seeds = e1.seeds
     warnings: list[str] = []
     if not power.get("frozen"):
         warnings.append("power.json не заморожен (стадия 1 E0): вердикты предварительные")
     current = config_hash(root)
-    for name, h in (("power.json", power.get("config_hash")), ("E1", e1.config_hash),
-                    ("E2", e2.config_hash if e2 else None), ("E4", e4.config_hash if e4 else None)):
-        if h is not None and h != current:
+    if power.get("config_hash") != current:
+        warnings.append("config_hash of power.json differs from the current configs")
+    seeds, excluded = select_seeds(e1, cfg, current)
+    e1.hidden = {s for s in e1.seeds if str(s) in excluded}
+    if excluded:
+        warnings.append(f"сиды E1 не вошли в вердикты: {excluded}")
+    for name, summ in (("E1", e1), ("E2", e2), ("E4", e4)):
+        if summ is None:
+            continue
+        if summ.config_hash is None:
+            warnings.append(f"{name}: у сводки нет общего config_hash (файлы сидов разных конфигов)")
+        elif summ.config_hash != current:
             warnings.append(f"config_hash of {name} differs from the current configs")
+        warnings.extend(f"{name}/summary.json: {w}" for w in summ.warnings)
+        if summ is not e1:
+            summ.hidden = {s for s in summ.seeds if summ.seed_hash(s) != current}
+            stale = sorted(summ.hidden & set(seeds))
+            if stale:
+                warnings.append(f"{name}: записи сидов {stale} с другим config_hash не используются "
+                                f"(для этих сидов ключи {name} считаются отсутствующими)")
+    empty_reason = ("нет ни одного сида E1 из seeds.global с текущим config_hash"
+                    + (f" (исключены: {excluded})" if excluded else ""))
     if e2 is None:
         warnings.append("нет results/E2/summary.json: H1b(ii) few-shot -> не хватило данных")
     if e4 is None:
@@ -316,52 +425,62 @@ def build_verdicts(root: Path = ROOT, smoke: bool = False, cfg: Configs | None =
 
     inputs_used: dict[str, Any] = {}
 
-    def _h1a(seed: int) -> Verdict:
+    def _h1a(seed: int) -> tuple[Verdict, Any]:
         inp = h1a_inputs(e1, seed, comparator)
         inputs_used.setdefault("H1a", inp["keys"])
-        return verdict_h1a(inp, cfg, power)
+        v = verdict_h1a(inp, cfg, power)
+        return v, ci95_tree("H1a", v, inp)
 
-    def _h1b(variant: str) -> Callable[[int], Verdict]:
-        def fn(seed: int) -> Verdict:
+    def _h1b(variant: str) -> Callable[[int], tuple[Verdict, Any]]:
+        def fn(seed: int) -> tuple[Verdict, Any]:
             inp = h1b_inputs(e1, e2, seed)
             inputs_used.setdefault("H1b", inp["keys"])
-            return verdict_h1b(inp, variant, cfg, power)
+            v = verdict_h1b(inp, variant, cfg, power)
+            return v, ci95_tree("H1b", v, inp, variant)
         return fn
 
-    def _h2(fly: str) -> Callable[[int], Verdict]:
-        def fn(seed: int) -> Verdict:
+    def _h2(fly: str) -> Callable[[int], tuple[Verdict, Any]]:
+        def fn(seed: int) -> tuple[Verdict, Any]:
             inp = h2_inputs(e1, seed, fly, comparator)
             inputs_used.setdefault(f"H2/{fly}", inp["keys"])
-            return verdict_h2(inp, cfg)
+            v = verdict_h2(inp, cfg)
+            return v, ci95_tree("H2", v, inp)
         return fn
 
-    def _h3(seed: int) -> Verdict:
+    def _h3(seed: int) -> tuple[Verdict, Any]:
         inp = h3_inputs(e1, e4, seed)
         inputs_used.setdefault("H3", inp["keys"])
-        return verdict_h3(inp, cfg, power)
+        v = verdict_h3(inp, cfg, power)
+        return v, ci95_tree("H3", v, inp)
+
+    def _agg(fn: Callable[[int], tuple[Verdict, Any]], hypothesis: str) -> dict[str, Any]:
+        per_seed, ci95 = _per_seed(seeds, fn)
+        return aggregate(per_seed, hypothesis, ci95=ci95, empty_reason=empty_reason)
 
     # The hypotheses sit at the top level (``H1b`` / ``H2_secondary`` hold one entry per variant): make_report's
     # ``iter_verdicts`` and check_acceptance read exactly this shape.
     verdicts = {
-        "H1a": aggregate(_per_seed(seeds, _h1a), "H1a"),
-        "H1b": {v: aggregate(_per_seed(seeds, _h1b(v)), "H1b") for v in H1B_VARIANTS},
-        "H2": aggregate(_per_seed(seeds, _h2(H2_FLIES[0])), "H2"),
-        "H2_secondary": {f: aggregate(_per_seed(seeds, _h2(f)), "H2") for f in H2_FLIES[1:]},
-        "H3": aggregate(_per_seed(seeds, _h3), "H3"),
+        "H1a": _agg(_h1a, "H1a"),
+        "H1b": {v: _agg(_h1b(v), "H1b") for v in H1B_VARIANTS},
+        "H2": _agg(_h2(H2_FLIES[0]), "H2"),
+        "H2_secondary": {f: _agg(_h2(f), "H2") for f in H2_FLIES[1:]},
+        "H3": _agg(_h3, "H3"),
     }
     overview = {"H1a": verdicts["H1a"]["status"], "H1b": {v: verdicts["H1b"][v]["status"] for v in H1B_VARIANTS},
                 "H2": verdicts["H2"]["status"], "H3": verdicts["H3"]["status"]}
     return {
         **verdicts,
         "created_at": _stamp(), "config_hash": current, "git_commit": git_commit(root), "smoke": bool(smoke),
-        "seeds": seeds, "aggregate_rule": AGGREGATE_RULE, "comparator": comparator, "overview": overview,
+        "seeds": seeds, "excluded_seeds": excluded, "aggregate_rule": AGGREGATE_RULE, "comparator": comparator,
+        "overview": overview,
         "power_config_hash": power.get("config_hash"), "power_frozen": bool(power.get("frozen")),
         "power_stage": power.get("stage"), "inputs": inputs_used,
         "sources": {"power": {"path": str(ppath), "frozen": bool(power.get("frozen")), "stage": power.get("stage"),
                               "created_at": power.get("created_at"), "config_hash": power.get("config_hash")},
-                    "E1": {"path": str(e1.path), "seeds": e1.seeds, "config_hash": e1.config_hash},
-                    "E2": None if e2 is None else {"path": str(e2.path), "seeds": e2.seeds, "config_hash": e2.config_hash},
-                    "E4": None if e4 is None else {"path": str(e4.path), "seeds": e4.seeds, "config_hash": e4.config_hash}},
+                    **{name: None if summ is None else
+                       {"path": str(summ.path), "seeds": summ.seeds, "config_hash": summ.config_hash,
+                        "unused_seeds": sorted(summ.hidden)}
+                       for name, summ in (("E1", e1), ("E2", e2), ("E4", e4))}},
         "warnings": warnings,
     }
 

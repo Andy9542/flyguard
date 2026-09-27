@@ -24,7 +24,9 @@ Rules the renderer follows (CLAUDE.md "Numbers in the report come only from resu
   ``run_all.sh`` (smoke criterion: every section present).
 * Facts of the setup (versions, KC count and in-degree, seeds, comparator) are written first to
   ``results/setup.json`` through ``flyguard.io`` (config_hash + git_commit) so that they are referenced like every
-  other number; the snapshot contains no data text.
+  other number; the snapshot contains no data text. Its ``git_commit`` is the commit the *report* is rendered on;
+  section 2 lists separately the commits the results were computed on (``git_commits`` of every summary, the
+  ``git_commit`` of power/contract/verdicts) and their ``git_dirty`` flags when recorded.
 * Prose carries no bare numerals: constants come with a config reference, and the decimal separator is a dot.
 * No text of any dataset example is read or printed: only counts, statistics, ids of experiments and journals.
 
@@ -733,8 +735,8 @@ def sec_setup(inp: Inputs, setup: dict[str, Any], spath: str) -> list[str]:
     pk = setup["packages"]
     out += [f"- Python {setup['python']} {ref(spath, 'python')}; платформа {setup['platform']} {ref(spath, 'platform')}.",
             "- Пакеты (версии из окружения, закреплены в `requirements.lock`): " + ", ".join(f"{p} {v} {ref(spath, f'packages/{p}')}" for p, v in pk.items() if v) + ".",
-            f"- Коммит репозитория: {setup.get('git_commit')} {ref(spath, 'git_commit')}; хеш конфига "
-            f"{setup['config_hash']} {ref(spath, 'config_hash')}.",
+            f"- Коммит, на котором собран отчёт: {setup.get('git_commit')} {ref(spath, 'git_commit')} (коммиты, на "
+            f"которых посчитаны результаты, — в таблице ниже); хеш конфига {setup['config_hash']} {ref(spath, 'config_hash')}.",
             f"- Сиды: глобальные {', '.join(str(s) for s in setup['seeds']['global'])} {ref(spath, 'seeds/global')}; "
             f"дети {', '.join(setup['seeds']['children'])} {ref(spath, 'seeds/children')}."]
     pins = setup.get("pins") or {}
@@ -771,7 +773,44 @@ def sec_setup(inp: Inputs, setup: dict[str, Any], spath: str) -> list[str]:
         out.append(f"- Генераторы парафраз: {gens} {ref(spath, 'paraphrase_models/generators')}; судьи: {judges} "
                    f"{ref(spath, 'paraphrase_models/judges')} (один судья: DEVIATIONS D2).")
     out.append(f"- Вычислитель: " + ", ".join(f"{k} {fmt(v)} {ref(spath, f'compute/{k}')}" for k, v in setup.get("compute", {}).items()) + ".")
+    out += ["", "**Коммиты, на которых посчитаны результаты** (одинаковость кода src, scripts и configs между ними "
+                "проверяет `scripts/check_acceptance.py`)", ""]
+    rows = result_commit_rows(inp)
+    out += table(["результаты", "коммит", "сиды", "незакоммиченные изменения кода"], rows) if rows else [f"_{MISSING}: файлов результатов нет._"]
     return out + [""]
+
+
+def result_commit_rows(inp: Inputs) -> list[list[str]]:
+    """(results, commit, seeds, uncommitted code changes) rows: the seeds of every experiment grouped by the commit
+    recorded in ``summary.json#git_commits``, then power/contract/verdicts. ``git_dirty`` is read from the seed
+    files: "нет" only when every file of the row records ``false``."""
+    def dirty_cell(flags: list[Any], seeds: list[str] | None = None) -> str:
+        bad = [s for s, f in zip(seeds or [NA] * len(flags), flags) if f is True]
+        if bad:
+            return "да" + (f": сиды {', '.join(bad)}" if seeds else "")
+        return "не записано" if any(f is None for f in flags) else "нет"
+
+    rows: list[list[str]] = []
+    for exp in EXPERIMENTS:
+        s = inp.summaries.get(exp)
+        if not s:
+            continue
+        path = inp.spath(exp)
+        by_commit: dict[Any, list[str]] = {}
+        for seed, c in sorted((s.get("git_commits") or {}).items(), key=lambda kv: int(kv[0])):
+            by_commit.setdefault(c, []).append(str(seed))
+        for c, seeds in by_commit.items():
+            flags = [(inp.json(R.result_path(exp, int(x), inp.smoke, inp.root)) or {}).get("git_dirty") for x in seeds]
+            rows.append([exp, (f"`{str(c)[:12]}`" if c else NA) + f" {ref(path, 'git_commits')}", ", ".join(seeds),
+                         dirty_cell(flags, seeds)])
+    for p in (R.power_path(inp.root, inp.smoke), inp.rdir / "contract.json", inp.rdir / "verdicts.json"):
+        d = inp.json(p)
+        if d is None:
+            continue
+        c = d.get("git_commit")
+        rows.append([inp.p(p), (f"`{str(c)[:12]}`" if c else NA) + f" {ref(inp.p(p), 'git_commit')}", NA,
+                     dirty_cell([d.get("git_dirty")])])
+    return rows
 
 
 def sec_data(inp: Inputs) -> list[str]:
@@ -1048,7 +1087,7 @@ def sec_reproduce(inp: Inputs, spath: str, setup: dict[str, Any]) -> list[str]:
     out = ["## 10. Воспроизведение", ""]
     out += ["```", "scripts/setup_env.sh", "scripts/fetch.sh", "scripts/gen_traces.sh pilot && scripts/gen_traces.sh run && scripts/gen_traces.sh freeze",
             "scripts/gen_paraphrases.sh all", "scripts/smoke.sh", "scripts/run_all.sh", "scripts/check_acceptance.py", "```", ""]
-    out += [f"Коммит {setup.get('git_commit')} {ref(spath, 'git_commit')}, хеш конфига {setup['config_hash']} {ref(spath, 'config_hash')}; "
+    out += [f"Коммит отчёта {setup.get('git_commit')} {ref(spath, 'git_commit')} (коммиты результатов — раздел 2), хеш конфига {setup['config_hash']} {ref(spath, 'config_hash')}; "
             f"сиды {', '.join(str(s) for s in setup['seeds']['global'])} {ref(spath, 'seeds/global')} "
             f"(смоук: первые {num(setup['seeds']['smoke_seeds'], spath, 'seeds/smoke_seeds')}). "
             "`run_all.sh` пропускает эксперимент, чей results/<E>/<seed>.json существует с текущим хешем конфига, "
@@ -1245,7 +1284,8 @@ def render(root: Path = ROOT, smoke: bool = False, figures: bool = True) -> tupl
 
     lines = [f"# FlyGuard — отчёт{' (смоук)' if smoke else ''}", "",
              f"Сгенерировано `scripts/make_report.py` {setup['created_at']} {ref(spath, 'created_at')}; "
-             f"коммит {setup.get('git_commit')} {ref(spath, 'git_commit')}; хеш конфига {setup['config_hash']} {ref(spath, 'config_hash')}. "
+             f"коммит отчёта {setup.get('git_commit')} {ref(spath, 'git_commit')} (коммиты, на которых посчитаны результаты, — "
+             f"раздел 2); хеш конфига {setup['config_hash']} {ref(spath, 'config_hash')}. "
              "Каждое число записано как `значение [нижняя, верхняя] (файл#ключ)`; ссылка ведёт к узлу JSON/YAML, из которого число "
              "прочитано (ключи результатов содержат `/`, разбор жадный). Десятичный разделитель — точка. Один сид: интервал — "
              "кластерный бутстреп; несколько сидов: среднее по сидам и t-интервал среднего (бутстреп-интервалы сидов в файлах). "
