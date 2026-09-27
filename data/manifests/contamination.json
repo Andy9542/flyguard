@@ -95,6 +95,63 @@
     }
    }
   },
+  "dojo": {
+   "test": {
+    "0": {
+     "documents": 1970,
+     "documents_matched": 0,
+     "share": 0.0
+    },
+    "1": {
+     "documents": 1001,
+     "documents_matched": 0,
+     "share": 0.0
+    }
+   },
+   "total": {
+    "documents": 3840,
+    "documents_matched": 0,
+    "share": 0.0
+   },
+   "unused": {
+    "0": {
+     "documents": 510,
+     "documents_matched": 0,
+     "share": 0.0
+    },
+    "1": {
+     "documents": 269,
+     "documents_matched": 0,
+     "share": 0.0
+    }
+   },
+   "val": {
+    "0": {
+     "documents": 90,
+     "documents_matched": 0,
+     "share": 0.0
+    }
+   }
+  },
+  "dyn": {
+   "test": {
+    "0": {
+     "documents": 2153,
+     "documents_matched": 0,
+     "share": 0.0
+    },
+    "1": {
+     "documents": 380,
+     "documents_matched": 0,
+     "share": 0.0
+    }
+   },
+   "total": {
+    "documents": 2533,
+    "documents_matched": 0,
+    "share": 0.0
+   }
+  },
   "notinject": {
    "test": {
     "0": {
@@ -105,6 +162,25 @@
    },
    "total": {
     "documents": 339,
+    "documents_matched": 0,
+    "share": 0.0
+   }
+  },
+  "para": {
+   "test": {
+    "0": {
+     "documents": 233,
+     "documents_matched": 0,
+     "share": 0.0
+    },
+    "1": {
+     "documents": 840,
+     "documents_matched": 0,
+     "share": 0.0
+    }
+   },
+   "total": {
+    "documents": 1073,
     "documents_matched": 0,
     "share": 0.0
    }
@@ -316,16 +392,41 @@
    ]
   },
   "dojo": {
-   "documents": 0,
-   "note": "nothing to compare",
+   "by_split": {
+    "test": {
+     "documents": 1001,
+     "ours_in_piguard": 0,
+     "piguard_in_ours": 0
+    },
+    "unused": {
+     "documents": 269,
+     "ours_in_piguard": 0,
+     "piguard_in_ours": 0
+    }
+   },
+   "documents": 1270,
+   "ours_in_piguard": 0,
+   "ours_in_piguard_share": 0.0,
+   "piguard_in_ours": 0,
+   "piguard_in_ours_share": 0.0,
    "piguard_texts": 111,
    "tags": [
     "InjecAgent"
    ]
   },
   "dyn": {
-   "documents": 0,
-   "note": "nothing to compare",
+   "by_split": {
+    "test": {
+     "documents": 380,
+     "ours_in_piguard": 0,
+     "piguard_in_ours": 0
+    }
+   },
+   "documents": 380,
+   "ours_in_piguard": 0,
+   "ours_in_piguard_share": 0.0,
+   "piguard_in_ours": 0,
+   "piguard_in_ours_share": 0.0,
    "piguard_texts": 111,
    "tags": [
     "InjecAgent"
@@ -476,6 +577,81 @@
     }
    }
   },
+  "dojo": {
+   "test": {
+    "0": {
+     "documents_all_windows_matched": 0,
+     "documents_with_matched_window": 0,
+     "share": 0.0,
+     "windows": 28044,
+     "windows_matched": 0
+    },
+    "1": {
+     "documents_all_windows_matched": 0,
+     "documents_with_matched_window": 0,
+     "share": 0.0,
+     "windows": 4226,
+     "windows_matched": 0
+    }
+   },
+   "total": {
+    "documents_all_windows_matched": 0,
+    "documents_with_matched_window": 0,
+    "share": 0.0,
+    "windows": 37373,
+    "windows_matched": 0
+   },
+   "unused": {
+    "0": {
+     "documents_all_windows_matched": 0,
+     "documents_with_matched_window": 0,
+     "share": 0.0,
+     "windows": 3687,
+     "windows_matched": 0
+    },
+    "1": {
+     "documents_all_windows_matched": 0,
+     "documents_with_matched_window": 0,
+     "share": 0.0,
+     "windows": 1077,
+     "windows_matched": 0
+    }
+   },
+   "val": {
+    "0": {
+     "documents_all_windows_matched": 0,
+     "documents_with_matched_window": 0,
+     "share": 0.0,
+     "windows": 339,
+     "windows_matched": 0
+    }
+   }
+  },
+  "dyn": {
+   "test": {
+    "0": {
+     "documents_all_windows_matched": 0,
+     "documents_with_matched_window": 0,
+     "share": 0.0,
+     "windows": 7464,
+     "windows_matched": 0
+    },
+    "1": {
+     "documents_all_windows_matched": 0,
+     "documents_with_matched_window": 0,
+     "share": 0.0,
+     "windows": 1199,
+     "windows_matched": 0
+    }
+   },
+   "total": {
+    "documents_all_windows_matched": 0,
+    "documents_with_matched_window": 0,
+    "share": 0.0,
+    "windows": 8663,
+    "windows_matched": 0
+   }
+  },
   "notinject": {
    "test": {
     "0": {
@@ -491,6 +667,31 @@
     "documents_with_matched_window": 0,
     "share": 0.0,
     "windows": 339,
+    "windows_matched": 0
+   }
+  },
+  "para": {
+   "test": {
+    "0": {
+     "documents_all_windows_matched": 0,
+     "documents_with_matched_window": 0,
+     "share": 0.0,
+     "windows": 235,
+     "windows_matched": 0
+    },
+    "1": {
+     "documents_all_windows_matched": 0,
+     "documents_with_matched_window": 0,
+     "share": 0.0,
+     "windows": 1796,
+     "windows_matched": 0
+    }
+   },
+   "total": {
+    "documents_all_windows_matched": 0,
+    "documents_with_matched_window": 0,
+    "share": 0.0,
+    "windows": 2031,
     "windows_matched": 0
    }
   }

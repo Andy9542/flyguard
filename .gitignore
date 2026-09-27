@@ -18,3 +18,7 @@ results/**/scores_cache/
 logs/*.log
 !logs/network.log
 !logs/data_access.log
+results/smoke/
+data/manifests/smoke/
+data/manifests/stage1/
+data/processed/

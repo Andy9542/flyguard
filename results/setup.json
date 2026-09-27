@@ -1,0 +1,195 @@
+{
+ "agent_model": "deepseek-v4-pro",
+ "bootstrap": {
+  "alpha": 0.05,
+  "cluster_key": "cluster_id",
+  "method": "percentile",
+  "n": 1000
+ },
+ "comparator": "protectai_v2",
+ "compute": {
+  "cpu_cores": 16,
+  "gpu": false,
+  "ram_gb": 31,
+  "wall_clock_hours": 56
+ },
+ "config_hash": "888c3f6379bd841ad3260b505d7089a4d74fcdc2967b4a5d911616d637aca3cb",
+ "connectome": {
+  "available": true,
+  "check_range": [
+   4.0,
+   8.0
+  ],
+  "density": 0.10362214875345685,
+  "glomeruli": 51,
+  "in_range": true,
+  "indegree_max": 29,
+  "indegree_mean": 5.284729586426299,
+  "indegree_median": 5.0,
+  "indegree_min": 1,
+  "kenyon_cells": 1886,
+  "meta": {
+   "n_glomeruli": 51,
+   "n_kc": 1886,
+   "n_kc_zero_indegree": 0,
+   "n_synapses": 185947.0,
+   "nnz": 9967,
+   "path": "/home/ubuntu/projects/flyguard/data/processed/connectome/malecns_R.npz",
+   "unavailable_keys": []
+  },
+  "n_cells": 1886,
+  "n_inputs": 51,
+  "n_zero_indegree": 0,
+  "nnz": 9967,
+  "outdegree_max": 473,
+  "outdegree_mean": 195.43136596679688,
+  "outdegree_min": 19,
+  "path": "data/processed/connectome/malecns_R.npz"
+ },
+ "created_at": "2026-09-26T18:19:39Z",
+ "git_commit": "02235f2c147e42f8785fe481edd4178fa43b9c55",
+ "guards": {
+  "piguard": {
+   "optional": false,
+   "path": "data/raw/models/piguard",
+   "present": true
+  },
+  "prompt_guard_2": {
+   "optional": true,
+   "path": "data/raw/models/prompt_guard_2",
+   "present": true
+  },
+  "protectai_v2": {
+   "optional": false,
+   "path": "data/raw/models/protectai_v2",
+   "present": true
+  }
+ },
+ "h2_margin_pp": 10,
+ "malecns": {
+  "bucket": "gs://flyem-male-cns/v1.0/",
+  "full_kc": 1886,
+  "indegree_check": [
+   4,
+   8
+  ],
+  "min_weight": 1,
+  "minconf": 0.5,
+  "reference_kc": 1838,
+  "side": "R",
+  "source": "flypath_build",
+  "version": "v1.0"
+ },
+ "packages": {
+  "agentdojo": "0.1.35",
+  "datasketch": "2.0.0",
+  "langdetect": "1.0.9",
+  "matplotlib": "3.11.2",
+  "numpy": "2.4.6",
+  "pandas": "3.0.6",
+  "pyarrow": "25.0.1",
+  "scikit-learn": "1.9.1",
+  "scipy": "1.17.1",
+  "torch": "2.14.0+cpu",
+  "transformers": "5.17.0",
+  "xxhash": "4.0.1"
+ },
+ "paraphrase_models": {
+  "generators": [
+   {
+    "calls_per_base": 2,
+    "model": "deepseek-flash",
+    "provider": "deepseek",
+    "thinking": "disabled"
+   }
+  ],
+  "judges": [
+   {
+    "model": "deepseek-v4-pro",
+    "provider": "deepseek",
+    "thinking": "disabled"
+   }
+  ],
+  "temperature_generate": 0.9,
+  "temperature_judge": 0.0
+ },
+ "pins": {
+  "agentdojo": {
+   "benchmark_version": "v1.2.2",
+   "package": "0.1.35",
+   "repo": "https://github.com/ethz-spylab/agentdojo"
+  },
+  "agentdyn": {
+   "benchmark_version": "v1.2.2",
+   "commit": "5353cf7615b135cace8d07c8f12dac53a16b6db3",
+   "repo": "https://github.com/SaFo-Lab/AgentDyn"
+  },
+  "flyhash_connectome": {
+   "commit": "91caf384abe291814d58e9563aa9713386d65a25",
+   "repo": "https://github.com/ssenge/FlyHash-Connectome"
+  },
+  "malecns": {
+   "bucket": "gs://flyem-male-cns/v1.0/",
+   "minconf": 0.5,
+   "version": "v1.0"
+  }
+ },
+ "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.39",
+ "preconditions": {
+  "h2_val_auc_deep": 0.75,
+  "h3_val_macro_auc": 0.75
+ },
+ "python": "3.11.14",
+ "seeds": {
+  "children": [
+   "nose",
+   "svd",
+   "perm",
+   "projection",
+   "subsample",
+   "curveball",
+   "bootstrap",
+   "paraphrase"
+  ],
+  "global": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9
+  ],
+  "smoke_seeds": 1
+ },
+ "smoke": false,
+ "smoke_limits": {
+  "bootstrap": 100,
+  "docs_per_source": 200,
+  "episodes": 20,
+  "n_null": 20,
+  "paraphrase_bases": 10,
+  "power": {
+   "n_boot": 100,
+   "n_rep": 5
+  },
+  "seeds": 1
+ },
+ "tost": {
+  "ci": 0.9,
+  "delta_rel": 0.05
+ },
+ "windows": {
+  "min_span_chars": 64,
+  "size": 256,
+  "stride": 192,
+  "text_hash": {
+   "algo": "xxhash64",
+   "encoding": "utf-8",
+   "seed": 0
+  }
+ }
+}

@@ -1,5 +1,12 @@
 {
  "breakdown": {
+  "attack:None/None": {
+   "cache_hit": 417640.0,
+   "calls": 2052.0,
+   "completion_tokens": 276964.0,
+   "cost_usd": 0.527893,
+   "prompt_tokens": 840836.0
+  },
   "attack:agentdojo/important_instructions": {
    "cache_hit": 15178112.0,
    "calls": 3511.0,
@@ -28,6 +35,13 @@
    "cost_usd": 0.272364,
    "prompt_tokens": 3440497.0
   },
+  "benchmark:None": {
+   "cache_hit": 417640.0,
+   "calls": 2052.0,
+   "completion_tokens": 276964.0,
+   "cost_usd": 0.527893,
+   "prompt_tokens": 840836.0
+  },
   "benchmark:agentdojo": {
    "cache_hit": 16480128.0,
    "calls": 3878.0,
@@ -43,18 +57,25 @@
    "prompt_tokens": 15386962.0
   },
   "model:deepseek-flash": {
-   "cache_hit": 779776.0,
-   "calls": 165.0,
-   "completion_tokens": 26955.0,
-   "cost_usd": 0.037589,
-   "prompt_tokens": 906953.0
+   "cache_hit": 933608.0,
+   "calls": 677.0,
+   "completion_tokens": 204788.0,
+   "cost_usd": 0.162593,
+   "prompt_tokens": 1179735.0
   },
   "model:deepseek-v4-pro": {
-   "cache_hit": 30464128.0,
-   "calls": 6030.0,
-   "completion_tokens": 898398.0,
-   "cost_usd": 4.078356,
-   "prompt_tokens": 32932791.0
+   "cache_hit": 30727936.0,
+   "calls": 7570.0,
+   "completion_tokens": 997529.0,
+   "cost_usd": 4.481246,
+   "prompt_tokens": 33500845.0
+  },
+  "stream:paraphrases": {
+   "cache_hit": 417640.0,
+   "calls": 2052.0,
+   "completion_tokens": 276964.0,
+   "cost_usd": 0.527893,
+   "prompt_tokens": 840836.0
   },
   "stream:traces": {
    "cache_hit": 31243904.0,
@@ -62,6 +83,13 @@
    "completion_tokens": 925353.0,
    "cost_usd": 4.115946,
    "prompt_tokens": 33839744.0
+  },
+  "suite:None/None": {
+   "cache_hit": 417640.0,
+   "calls": 2052.0,
+   "completion_tokens": 276964.0,
+   "cost_usd": 0.527893,
+   "prompt_tokens": 840836.0
   },
   "suite:agentdojo/banking": {
    "cache_hit": 1008256.0,
@@ -114,7 +142,7 @@
   }
  },
  "budget_usd": 7.0,
- "n_calls": 6195,
+ "n_calls": 8247,
  "pilot": {
   "chosen_by_rule": false,
   "chosen_model": "deepseek-v4-pro",
@@ -178,7 +206,7 @@
    "spent_usd": 0.20373
   }
  },
- "remaining_usd": 2.884054,
- "spent_usd": 4.115946,
+ "remaining_usd": 2.356162,
+ "spent_usd": 4.643838,
  "within_budget": true
 }

@@ -1,0 +1,519 @@
+{
+ "banned_words": {
+  "chi2_extra": [
+   "write",
+   "question",
+   "answer",
+   "following",
+   "alle",
+   "say",
+   "just",
+   "vergiss",
+   "nun",
+   "hate",
+   "able",
+   "aufgabe",
+   "task",
+   "sie",
+   "act",
+   "bitte",
+   "dass",
+   "text",
+   "keine",
+   "neue",
+   "schreibe",
+   "vorherigen",
+   "das",
+   "frage",
+   "mit",
+   "command",
+   "documents",
+   "film",
+   "nur",
+   "provided"
+  ],
+  "chi2_source": "data/raw/deepset/train.parquet",
+  "final": [
+   "ignore",
+   "ignoring",
+   "disregard",
+   "forget",
+   "override",
+   "overriding",
+   "bypass",
+   "previous",
+   "prior",
+   "above",
+   "instructions",
+   "instruction",
+   "system",
+   "prompt",
+   "prompts",
+   "developer",
+   "admin",
+   "administrator",
+   "root",
+   "jailbreak",
+   "dan",
+   "pretend",
+   "roleplay",
+   "role-play",
+   "act as",
+   "you are now",
+   "from now on",
+   "new task",
+   "important",
+   "urgent",
+   "attention",
+   "reveal",
+   "print",
+   "output",
+   "repeat",
+   "verbatim",
+   "secret",
+   "password",
+   "credentials",
+   "exfiltrate",
+   "send",
+   "forward",
+   "email",
+   "transfer",
+   "confidential",
+   "rules",
+   "restrictions",
+   "guidelines",
+   "policy",
+   "filter",
+   "safety",
+   "comply",
+   "must",
+   "immediately",
+   "do not",
+   "don't",
+   "write",
+   "question",
+   "answer",
+   "following",
+   "alle",
+   "say",
+   "just",
+   "vergiss",
+   "nun",
+   "hate",
+   "able",
+   "aufgabe",
+   "task",
+   "sie",
+   "act",
+   "bitte",
+   "dass",
+   "text",
+   "keine",
+   "neue",
+   "schreibe",
+   "vorherigen",
+   "das",
+   "frage",
+   "mit",
+   "command",
+   "documents",
+   "film",
+   "nur",
+   "provided"
+  ],
+  "n_final": 86,
+  "starter": [
+   "ignore",
+   "ignoring",
+   "disregard",
+   "forget",
+   "override",
+   "overriding",
+   "bypass",
+   "previous",
+   "prior",
+   "above",
+   "instructions",
+   "instruction",
+   "system",
+   "prompt",
+   "prompts",
+   "developer",
+   "admin",
+   "administrator",
+   "root",
+   "jailbreak",
+   "dan",
+   "pretend",
+   "roleplay",
+   "role-play",
+   "act as",
+   "you are now",
+   "from now on",
+   "new task",
+   "important",
+   "urgent",
+   "attention",
+   "reveal",
+   "print",
+   "output",
+   "repeat",
+   "verbatim",
+   "secret",
+   "password",
+   "credentials",
+   "exfiltrate",
+   "send",
+   "forward",
+   "email",
+   "transfer",
+   "confidential",
+   "rules",
+   "restrictions",
+   "guidelines",
+   "policy",
+   "filter",
+   "safety",
+   "comply",
+   "must",
+   "immediately",
+   "do not",
+   "don't"
+  ]
+ },
+ "counts": {
+  "accepted_candidates": 1396,
+  "bases": {
+   "deepset_benign": 56,
+   "deepset_injection": 60,
+   "template": 140
+  },
+  "bases_by_origin": {
+   "composed": 105,
+   "deepset_test": 116,
+   "trace_log": 35
+  },
+  "bases_by_template": {
+   "ignore_previous": 35,
+   "important_instructions": 35,
+   "injecagent": 35,
+   "tool_knowledge": 35
+  },
+  "bases_partial": [],
+  "bases_with_candidates_by_names_rule": {
+   "names_required": 205,
+   "names_skipped": 51
+  },
+  "bases_with_output": 235,
+  "candidates": 2048,
+  "candidates_by_declared_stratum": {
+   "None": 448,
+   "deep": 800,
+   "shallow": 800
+  },
+  "demoted_deep_to_shallow": 343,
+  "entity_rejections_by_base_lang": {
+   "de": 12,
+   "en": 103
+  },
+  "filtered_passed": 1540,
+  "filtered_rejected_by_reason": {
+   "duplicate": 29,
+   "entities": 115,
+   "jaccard_high": 122,
+   "language": 160,
+   "length": 82
+  },
+  "generation_calls": {
+   "ok": 512
+  },
+  "generation_delivery": {
+   "as_asked": 512
+  },
+  "generation_refusal_reasons": {},
+  "judge_calls": {
+   "ok": 1540
+  },
+  "judge_refusal_reasons": {},
+  "judged_candidates": 1540,
+  "selected": 1073,
+  "selected_by_generator": {
+   "deepseek-flash": 1073
+  },
+  "selected_by_kind": {
+   "deepset_benign": 233,
+   "deepset_injection": 164,
+   "template": 676
+  },
+  "selected_by_label": {
+   "0": 233,
+   "1": 840
+  },
+  "selected_by_stratum": {
+   "deep": 426,
+   "shallow": 647
+  },
+  "template_verification": {
+   "composed": 105,
+   "composed_differs_from_log": 0,
+   "composed_equals_log": 35,
+   "from_log": 35
+  }
+ },
+ "dates": {
+  "first_call": "2026-09-26T11:03:28Z",
+  "last_call": "2026-09-26T12:04:06Z"
+ },
+ "files": {
+  "bases.jsonl": "a039f7a0992f72f76ad53088f300e0e147ebcc79a593a56c2a9641a11212534d",
+  "calls.jsonl": "724247515c813ab6f8a68eccf0fae75a0527a8360678a96b5c8fadf7f725f906",
+  "judgements.jsonl": "00f49f2b4d1ec06886b145095598a829faecdacf2b6655c25d81f510bce2b031",
+  "paraphrases.csv": "1207f0dfcf418dfaf9daca5ed9707d29129d9621960946b9d08a6dde13f80a60"
+ },
+ "fill_strings": {
+  "model": "DeepSeek",
+  "user": "Emma Johnson"
+ },
+ "filters": {
+  "dedup_jaccard": 0.8,
+  "deep_max": 0.3,
+  "jaccard_max": 0.5,
+  "language": "en",
+  "length_ratio": [
+   0.5,
+   2.0
+  ],
+  "shallow_range": [
+   0.3,
+   0.5
+  ],
+  "shingle": 5
+ },
+ "generated": "2026-09-26T12:04:58Z",
+ "judge_agreement": {
+  "n_agree": 1540,
+  "n_candidates_fully_judged": 1540,
+  "n_disagree": 0,
+  "n_judges": 1
+ },
+ "max_accepted_per_base": 5,
+ "models": {
+  "generators": [
+   {
+    "calls_per_base": 2,
+    "model": "deepseek-flash",
+    "provider": "deepseek",
+    "thinking": "disabled"
+   }
+  ],
+  "judge_rule": "unanimity (single judge: DEVIATIONS D2)",
+  "judges": [
+   {
+    "model": "deepseek-v4-pro",
+    "provider": "deepseek",
+    "thinking": "disabled"
+   }
+  ],
+  "max_tokens": 4096,
+  "n_judges": 1,
+  "response_format": "json_object",
+  "temperature_generate": 0.9,
+  "temperature_judge": 0.0
+ },
+ "per_generator_call": {
+  "benign_total": 4,
+  "deep": 2,
+  "shallow": 2
+ },
+ "prompts_sha256": {
+  "banned_words": "6a649e9323f58d34f74594d51496128966c10b496941e173ea2fb7a8780ee7c2",
+  "generator_benign": "a6f04b02c911bbee0c82b00bc5417e36a5b23bbfdea282371c10026638fa5aaa",
+  "generator_injection": "d97a2604e4c49ed756055849391bcc5a626c613e5e61192b4f52fb15e5e7a657",
+  "judge_benign": "f5591737a63f6d6de52cc653787f9c0b3e186c21218a34b1114e53f43e1c7a3b",
+  "judge_injection": "0da3326d2294b5508fe0d4ed6b87770f5a9c008a8e7cce8719d639f8de38e072"
+ },
+ "provider": {
+  "base_url": "https://api.deepseek.com",
+  "name": "deepseek"
+ },
+ "rates": {
+  "acceptance": {
+   "by_generator": {
+    "deepseek-flash": {
+     "accepted": 1396,
+     "n": 1540,
+     "rate": 0.9065
+    }
+   },
+   "by_kind": {
+    "deepset_benign": {
+     "accepted": 319,
+     "n": 320,
+     "rate": 0.9969
+    },
+    "deepset_injection": {
+     "accepted": 179,
+     "n": 273,
+     "rate": 0.6557
+    },
+    "template": {
+     "accepted": 898,
+     "n": 947,
+     "rate": 0.9483
+    }
+   },
+   "by_stratum": {
+    "deep": {
+     "accepted": 513,
+     "n": 606,
+     "rate": 0.8465
+    },
+    "shallow": {
+     "accepted": 883,
+     "n": 934,
+     "rate": 0.9454
+    }
+   },
+   "by_template": {
+    "deepset_benign": {
+     "accepted": 319,
+     "n": 320,
+     "rate": 0.9969
+    },
+    "deepset_injection": {
+     "accepted": 179,
+     "n": 273,
+     "rate": 0.6557
+    },
+    "ignore_previous": {
+     "accepted": 229,
+     "n": 258,
+     "rate": 0.8876
+    },
+    "important_instructions": {
+     "accepted": 211,
+     "n": 213,
+     "rate": 0.9906
+    },
+    "injecagent": {
+     "accepted": 246,
+     "n": 263,
+     "rate": 0.9354
+    },
+    "tool_knowledge": {
+     "accepted": 212,
+     "n": 213,
+     "rate": 0.9953
+    }
+   }
+  },
+  "generation_refusal": {
+   "by_generator": {
+    "deepseek-flash": {
+     "n": 512,
+     "rate": 0.0,
+     "refusals": 0
+    }
+   },
+   "by_kind": {
+    "deepset_benign": {
+     "n": 112,
+     "rate": 0.0,
+     "refusals": 0
+    },
+    "deepset_injection": {
+     "n": 120,
+     "rate": 0.0,
+     "refusals": 0
+    },
+    "template": {
+     "n": 280,
+     "rate": 0.0,
+     "refusals": 0
+    }
+   },
+   "by_template": {
+    "deepset_benign": {
+     "n": 112,
+     "rate": 0.0,
+     "refusals": 0
+    },
+    "deepset_injection": {
+     "n": 120,
+     "rate": 0.0,
+     "refusals": 0
+    },
+    "ignore_previous": {
+     "n": 70,
+     "rate": 0.0,
+     "refusals": 0
+    },
+    "important_instructions": {
+     "n": 70,
+     "rate": 0.0,
+     "refusals": 0
+    },
+    "injecagent": {
+     "n": 70,
+     "rate": 0.0,
+     "refusals": 0
+    },
+    "tool_knowledge": {
+     "n": 70,
+     "rate": 0.0,
+     "refusals": 0
+    }
+   }
+  },
+  "judge_refusal": {
+   "by_judge": {
+    "deepseek-v4-pro": {
+     "n": 1540,
+     "rate": 0.0,
+     "refusals": 0
+    }
+   },
+   "by_kind": {
+    "deepset_benign": {
+     "n": 320,
+     "rate": 0.0,
+     "refusals": 0
+    },
+    "deepset_injection": {
+     "n": 273,
+     "rate": 0.0,
+     "refusals": 0
+    },
+    "template": {
+     "n": 947,
+     "rate": 0.0,
+     "refusals": 0
+    }
+   }
+  }
+ },
+ "seed": {
+  "global": 0,
+  "paraphrase": 23012616
+ },
+ "spend": {
+  "budget_usd": 7.0,
+  "by_model": {
+   "deepseek-flash": 0.125004,
+   "deepseek-v4-pro": 0.402889
+  },
+  "by_role": {
+   "generator": {
+    "cost_usd": 0.125004,
+    "n_calls": 512
+   },
+   "judge": {
+    "cost_usd": 0.402889,
+    "n_calls": 1540
+   }
+  },
+  "cost_usd": 0.527893,
+  "n_calls": 2052,
+  "spend_file": "results/spend/paraphrases.jsonl"
+ }
+}
