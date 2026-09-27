@@ -11,10 +11,15 @@
 #   scripts/run_all.sh --seeds 0,1          override the global seeds of the experiment stages
 #   scripts/run_all.sh --list               print the stage names and exit
 #   scripts/run_all.sh --dry-run            evaluate the "done" predicates and print what would run, run nothing
+#   scripts/run_all.sh --jobs 4             run the seeds of E1..E6 as up to 4 parallel processes (real mode only)
 #
 # Stages, in order:
 #   setup_env fetch gen_traces gen_paraphrases build_stage1 e0_stage1 build_full e0_stage2
-#   e1 e4 e5 e3 e2 e6 contract verdicts report check
+#   prescore e1 e4 e5 e3 e2 e6 contract verdicts report check
+#
+# prescore fills the transformer score caches (seed-independent) with one process per model before any seed runs;
+# the cache writer is locked, so seeds can then run as parallel processes (--jobs). After a parallel stage the
+# summary is rebuilt once from every seed file.
 #
 # Idempotency. Every stage has a "done" predicate that is evaluated before it runs (see stage_done below): a virtual
 # environment that imports, the fetched files, a frozen manifest, a splits.json that already covers the sources on
@@ -45,12 +50,12 @@ PY="$ROOT/.venv/bin/python"
 LOG="$ROOT/logs/run_all.log"; mkdir -p "$ROOT/logs"
 
 STAGES=(setup_env fetch gen_traces gen_paraphrases build_stage1 e0_stage1 build_full e0_stage2
-        e1 e4 e5 e3 e2 e6 contract verdicts report check)
+        prescore e1 e4 e5 e3 e2 e6 contract verdicts report check)
 # One entry point for every experiment (src/flyguard/experiments/run.py):
 #   run E0 --stage 1|2 [--seed s]   run E1..E6 [--seeds 0,1,...]   run contract [--seeds s]   run verdicts   (+ --smoke)
 EXP_CMD=(-m flyguard.experiments.run)
 
-SMOKE=0; FROM=""; ONLY=""; SKIP=""; SEEDS=""; DRY=0
+SMOKE=0; FROM=""; ONLY=""; SKIP=""; SEEDS=""; DRY=0; JOBS=1
 usage() { sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -61,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     --seeds) SEEDS="$2"; shift ;;
     --list) printf '%s\n' "${STAGES[@]}"; exit 0 ;;
     --dry-run) DRY=1 ;;
+    --jobs) JOBS="$2"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -111,6 +117,8 @@ stage_done() {
     gen_traces) [[ -f results/shared/traces_manifest.json ]] && echo done || echo todo ;;
     gen_paraphrases) [[ -f data/paraphrases/paraphrases_manifest.json && -f data/paraphrases/paraphrases.csv ]] && echo done || echo todo ;;
     report|check) echo todo ;;
+    prescore)
+      [[ -f "logs/prescore_${MODE}.done" && "$(cat "logs/prescore_${MODE}.done")" == "$(sha256sum "$( [[ $SMOKE == 1 ]] && echo data/processed/smoke || echo data/processed)/windows.parquet" 2>/dev/null | cut -c1-64)" ]] && echo done || echo todo ;;
     *) "$PY" - "$stage" "$SMOKE" "$SEEDS" <<'PY'
 import json, sys
 from pathlib import Path
@@ -231,7 +239,20 @@ run_build_stage1() { "$PY" -m flyguard.data.build --without-traces "${SMOKE_FLAG
 run_build_full() { "$PY" -m flyguard.data.build "${SMOKE_FLAG[@]}"; }
 run_e0_stage1() { "$PY" "${EXP_CMD[@]}" E0 --stage 1 --seed "${SEEDS%%,*}" "${SMOKE_FLAG[@]}"; }
 run_e0_stage2() { "$PY" "${EXP_CMD[@]}" E0 --stage 2 --seed "${SEEDS%%,*}" "${SMOKE_FLAG[@]}"; }
-run_experiment() { "$PY" "${EXP_CMD[@]}" "$1" --seeds "$SEEDS" "${SMOKE_FLAG[@]}"; }
+run_experiment() {
+  local E="$1" first="${SEEDS%%,*}"
+  if [[ $JOBS -gt 1 && $SMOKE == 0 && "$SEEDS" == *,* ]]; then
+    # one process per seed; E1 times the transformer guards only on the first seed (A39); then one summary
+    local nt=$(( $(nproc) / JOBS )); (( nt < 1 )) && nt=1
+    export OMP_NUM_THREADS=$nt MKL_NUM_THREADS=$nt OPENBLAS_NUM_THREADS=$nt NUMEXPR_NUM_THREADS=$nt   # no BLAS oversubscription
+    printf '%s\n' ${SEEDS//,/ } | xargs -P "$JOBS" -I{} bash -c '
+      extra=(); [[ "$1" == E1 && "$2" != "$3" ]] && extra=(--latency-guards never)
+      exec "$0" -m flyguard.experiments.run "$1" --seeds "$2" "${extra[@]}" >> "logs/${1}_seed$2.log" 2>&1' "$PY" "$E" {} "$first"
+    "$PY" -c 'import sys; from flyguard.experiments import results as R; R.summarize(sys.argv[1], False)' "$E"
+  else
+    "$PY" "${EXP_CMD[@]}" "$E" --seeds "$SEEDS" "${SMOKE_FLAG[@]}"
+  fi
+}
 run_e1() { run_experiment E1; }
 run_e2() { run_experiment E2; }
 run_e3() { run_experiment E3; }
@@ -239,6 +260,16 @@ run_e4() { run_experiment E4; }
 run_e5() { run_experiment E5; }
 run_e6() { run_experiment E6; }
 run_contract() { "$PY" "${EXP_CMD[@]}" contract --seeds "${SEEDS%%,*}" "${SMOKE_FLAG[@]}"; }   # one CSV, first seed (contract_run)
+run_prescore() {
+  local m pids=() rc=0 wp
+  for m in protectai_v2 piguard prompt_guard_2; do
+    "$PY" -m flyguard.experiments.prescore --model "$m" "${SMOKE_FLAG[@]}" >> "logs/prescore_${m}.log" 2>&1 & pids+=($!)
+  done
+  for m in "${pids[@]}"; do wait "$m" || rc=$?; done
+  [[ $rc == 0 ]] || return "$rc"
+  wp="$( [[ $SMOKE == 1 ]] && echo data/processed/smoke || echo data/processed)/windows.parquet"
+  sha256sum "$wp" | cut -c1-64 > "logs/prescore_${MODE}.done"
+}
 run_verdicts() { "$PY" "${EXP_CMD[@]}" verdicts "${SMOKE_FLAG[@]}"; }
 run_report() { "$PY" scripts/make_report.py "${SMOKE_FLAG[@]}"; }
 run_check() {

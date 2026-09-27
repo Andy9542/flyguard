@@ -40,6 +40,7 @@ baselines:
   transformers:
     comparator: protectai_v2          # primary comparator, assigned before any test read (ТЗ 3.2)
     batch_size: 32
+    num_threads: 4                    # measured on this 16-vCPU VM: DeBERTa saturates at 4 threads (10.9 windows/s; 16 threads: 4.6); 3 models x 4 threads in parallel: ~17/s total
     cache_dir: data/processed/scores_cache
     models:
       protectai_v2: {path: data/raw/models/protectai_v2, max_length: 512, positive_label: INJECTION}

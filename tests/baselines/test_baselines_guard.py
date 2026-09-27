@@ -217,3 +217,25 @@ def test_missing_optional_model_is_unavailable_and_refuses_to_score(tmp_path):
     # config present but weights missing -> also unavailable
     (mdir / "model.safetensors").unlink()
     assert GuardModel("fake", cfg, loader=stub_loader(1)[0]).available is False
+
+
+def test_score_cache_append_is_safe_across_processes(tmp_path):
+    """Several processes appending to one cache file keep every row (fcntl lock around read-merge-replace)."""
+    import multiprocessing as mp
+    from flyguard.baselines.transformers_guard import ScoreCache
+    path = tmp_path / "m.parquet"
+    ctx = mp.get_context("fork")
+    procs = [ctx.Process(target=_append_worker, args=(str(path), w)) for w in range(4)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join()
+    assert all(p.exitcode == 0 for p in procs)
+    assert len(ScoreCache(path).load()) == 4 * 25
+
+
+def _append_worker(path: str, w: int) -> None:
+    from flyguard.baselines.transformers_guard import ScoreCache
+    cache = ScoreCache(path)
+    for i in range(25):
+        cache.append({f"h{w}_{i}": float(i)}, "m", 512)

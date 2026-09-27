@@ -131,7 +131,20 @@ class ScoreCache:
         return {h: s for h, s in self.load().items() if h in want}
 
     def append(self, scores: Mapping[str, float], model: str, max_length: int) -> int:
-        """Add new hashes; returns the number of rows written (0 when everything was already cached)."""
+        """Add new hashes; returns the number of rows written (0 when everything was already cached).
+
+        The read-merge-replace runs under an exclusive ``fcntl`` lock on ``<file>.lock`` so that several processes
+        (seeds run in parallel) never lose each other's rows."""
+        import fcntl
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path.with_suffix(self.path.suffix + ".lock"), "a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                return self._append_locked(scores, model, max_length)
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def _append_locked(self, scores: Mapping[str, float], model: str, max_length: int) -> int:
         existing = self.read()
         known = set(existing["text_hash"].astype(str).tolist()) if not existing.empty else set()
         rows = [(h, float(s)) for h, s in scores.items() if h not in known]
@@ -187,7 +200,9 @@ class GuardModel:
         self.trust_remote_code = bool(self.spec.get("trust_remote_code", False))
         self.optional = bool(self.spec.get("optional", False))
         self.batch_size = int(tcfg.get("batch_size", 32))
-        self.num_threads = int(cfg.operator.get("compute", {}).get("cpu_cores", 0) or 0)
+        # DeBERTa on this 16-logical-core CPU is ~2x faster at 4-8 threads than at 16 (hyper-threads, measured
+        # 2026-09-27: 4.6 vs 10.5 windows/s); baselines.transformers.num_threads wins over compute.cpu_cores.
+        self.num_threads = int(tcfg.get("num_threads") or cfg.operator.get("compute", {}).get("cpu_cores", 0) or 0)
         win = cfg.default["windows"]
         self.stride_ratio = float(win["stride"]) / float(win["size"])
         cdir = Path(cache_dir) if cache_dir is not None else Path(tcfg["cache_dir"])
