@@ -13,9 +13,28 @@
 #   scripts/run_all.sh --dry-run            evaluate the "done" predicates and print what would run, run nothing
 #   scripts/run_all.sh --jobs 4             run the seeds of E1..E6 as up to 4 parallel processes (real mode only)
 #
+# One run at a time: every run except --dry-run/--list/--help holds an exclusive flock on logs/run_all.lock (the
+# file holds the pid of the holder); a second instance (real or smoke: they share logs, caches and the CPU) exits 75
+# at once. --dry-run takes no lock: it only reads, and scripts/check_acceptance.py calls it from inside the check
+# stage of a running instance (criterion "run_all.sh ... продолжает прерванный прогон": a dry run over a finished
+# tree plans nothing but report and check).
+#
+# prescore is skipped only when its done predicate holds: --from <stage> after prescore evaluates it first and runs
+# it when E1 or E6 (the guard-score readers) are still ahead, and --skip prescore is ignored while it is not done.
+# --only <stage> is the expert exception: exactly that stage runs, nothing else is looked at. Done = the marker
+# logs/prescore_<mode>.done holds the key of what decides the scored set (windows.parquet, splits.json and
+# pools.json of the mode, configs/default.yaml, configs/experiments/E6.yaml) and the score cache is not empty.
+#
+# Smoke profile: run_all.sh passes no experiment options in --smoke beyond --smoke itself; the experiment modules
+# read smoke.* of configs/default.yaml themselves (E2 smoke.subsamples_per_point, E6 smoke.e6_parts, E1
+# smoke.guard_latency; ASSUMPTIONS A54), so nothing here overrides them.
+#
 # Stages, in order:
 #   setup_env fetch gen_traces gen_paraphrases build_stage1 e0_stage1 build_full e0_stage2
 #   prescore e1 e4 e5 e3 e2 e6 contract verdicts report check
+#
+# report runs python -m flyguard.gen.trace_stats (results/traces_stats.json, in both modes: it depends only on the
+# frozen traces manifest and the published runs, not on the smoke subsets) and then scripts/make_report.py.
 #
 # prescore fills the transformer score caches (seed-independent) with one process per model before any seed runs;
 # the cache writer is locked, so seeds can then run as parallel processes (--jobs). After a parallel stage the
@@ -36,6 +55,9 @@
 #
 # Timing log: logs/run_all.log, one tab-separated line per stage event
 #   <utc time>  <mode: real|smoke>  <stage>  <status: start|done|skip|fail|TOTAL>  <seconds>  <note>
+# The "RUN start" note records the arguments, --jobs, nproc and the thread caps: the BLAS cap of each parallel seed
+# process (OMP/MKL/OPENBLAS/NUMEXPR_NUM_THREADS = nproc / jobs, applied only with --jobs > 1 in real mode), the
+# inherited OMP_NUM_THREADS and baselines.transformers.num_threads of the guard processes (ASSUMPTIONS A39, A41).
 # scripts/check_acceptance.py derives the 15-minute smoke criterion from these lines: the time of a clean smoke run
 # = the sum, over the stages build_stage1 .. report (prescore included), of each stage's most recent smoke "done"
 # duration (a re-entered or --from run skips finished stages, so the TOTAL of the last run alone would understate a
@@ -61,7 +83,7 @@ STAGES=(setup_env fetch gen_traces gen_paraphrases build_stage1 e0_stage1 build_
 EXP_CMD=(-m flyguard.experiments.run)
 
 SMOKE=0; FROM=""; ONLY=""; SKIP=""; SEEDS=""; DRY=0; JOBS=1
-usage() { sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --smoke) SMOKE=1 ;;
@@ -81,6 +103,20 @@ MODE=$([[ $SMOKE == 1 ]] && echo smoke || echo real)
 SMOKE_FLAG=(); [[ $SMOKE == 1 ]] && SMOKE_FLAG=(--smoke)
 is_stage() { local s; for s in "${STAGES[@]}"; do [[ "$s" == "$1" ]] && return 0; done; return 1; }
 for s in $FROM $ONLY ${SKIP//,/ }; do is_stage "$s" || { echo "unknown stage: $s (see --list)" >&2; exit 2; }; done
+[[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "--jobs needs a positive integer, got: $JOBS" >&2; exit 2; }
+NPROC="$(nproc 2>/dev/null || echo 1)"
+SEED_THREADS=$(( NPROC / JOBS )); (( SEED_THREADS < 1 )) && SEED_THREADS=1   # BLAS cap of one parallel seed process
+
+# one instance at a time (header): the lock is held until this shell and every child that inherited fd 9 exit
+LOCK="$ROOT/logs/run_all.lock"
+if [[ $DRY == 0 ]]; then
+  exec 9>>"$LOCK"
+  if ! flock -n 9; then
+    echo "run_all.sh: another instance holds $LOCK (pid $(head -c 32 "$LOCK" 2>/dev/null | tr -dc '0-9')); not starting" >&2
+    exit 75
+  fi
+  printf '%s\n' "$$" > "$LOCK"
+fi
 
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 logline() { printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(ts)" "$MODE" "$1" "$2" "${3:-}" "${4:-}" >> "$LOG"; }
@@ -122,8 +158,8 @@ stage_done() {
     gen_traces) [[ -f results/shared/traces_manifest.json ]] && echo done || echo todo ;;
     gen_paraphrases) [[ -f data/paraphrases/paraphrases_manifest.json && -f data/paraphrases/paraphrases.csv ]] && echo done || echo todo ;;
     report|check) echo todo ;;
-    prescore)   # the marker holds the hash of the scored windows.parquet; a cache moved aside (0 rows) is not done
-      [[ -f "logs/prescore_${MODE}.done" && "$(cat "logs/prescore_${MODE}.done")" == "$(sha256sum "$( [[ $SMOKE == 1 ]] && echo data/processed/smoke || echo data/processed)/windows.parquet" 2>/dev/null | cut -c1-64)" ]] \
+    prescore)   # the marker holds prescore_key of the scored set; a cache moved aside (0 rows) is not done
+      [[ -f "logs/prescore_${MODE}.done" && "$(cat "logs/prescore_${MODE}.done")" == "$(prescore_key)" ]] \
         && [[ "$(scores_cache_rows)" =~ ^[1-9][0-9]*$ ]] && echo done || echo todo ;;
     *) "$PY" - "$stage" "$SMOKE" "$SEEDS" <<'PY'
 import json, sys
@@ -250,7 +286,7 @@ run_experiment() {
   local E="$1" first="${SEEDS%%,*}"
   if [[ $JOBS -gt 1 && $SMOKE == 0 && "$SEEDS" == *,* ]]; then
     # one process per seed; E1 times the transformer guards only on the first seed (A39); then one summary
-    local nt=$(( $(nproc) / JOBS )); (( nt < 1 )) && nt=1
+    local nt=$SEED_THREADS   # nproc / jobs, recorded in the RUN start line
     export OMP_NUM_THREADS=$nt MKL_NUM_THREADS=$nt OPENBLAS_NUM_THREADS=$nt NUMEXPR_NUM_THREADS=$nt   # no BLAS oversubscription
     # xargs exits 123 when a seed process fails and 125 when one is killed (then it starts no further seeds): that
     # status is the stage's status; the summary is still rebuilt from the seeds that finished, and a rerun of the
@@ -287,18 +323,31 @@ print(sum(pq.read_metadata(p).num_rows for p in sorted(d.glob("*.parquet"))) if 
 PY
 }
 stage_note() { [[ "$1" == prescore ]] && echo "scores_cache_rows=$(scores_cache_rows)" || true; }
+prescore_key() {   # sha256 over the inputs that decide which texts prescore scores (header); empty when no windows
+  local d="data/processed" m="data/manifests"
+  [[ $SMOKE == 1 ]] && { d+="/smoke"; m+="/smoke"; }
+  [[ -f "$d/windows.parquet" ]] || return 0
+  { cat "$d/windows.parquet" "$m/splits.json" "$m/pools.json" configs/default.yaml configs/experiments/E6.yaml 2>/dev/null || true; } \
+    | sha256sum | cut -c1-64
+}
 run_prescore() {
-  local m pids=() rc=0 wp
+  local m pids=() rc=0 key
   for m in protectai_v2 piguard prompt_guard_2; do
     "$PY" -m flyguard.experiments.prescore --model "$m" "${SMOKE_FLAG[@]}" >> "logs/prescore_${m}.log" 2>&1 & pids+=($!)
   done
   for m in "${pids[@]}"; do wait "$m" || rc=$?; done
   [[ $rc == 0 ]] || return "$rc"
-  wp="$( [[ $SMOKE == 1 ]] && echo data/processed/smoke || echo data/processed)/windows.parquet"
-  sha256sum "$wp" | cut -c1-64 > "logs/prescore_${MODE}.done"
+  key="$(prescore_key)"
+  [[ -n "$key" ]] || { say "prescore: no windows.parquet for mode $MODE"; return 1; }
+  printf '%s\n' "$key" > "logs/prescore_${MODE}.done"
 }
 run_verdicts() { "$PY" "${EXP_CMD[@]}" verdicts "${SMOKE_FLAG[@]}"; }
-run_report() { "$PY" scripts/make_report.py "${SMOKE_FLAG[@]}"; }
+run_report() {
+  # ТЗ Этап 6 section 4 ("сверка с опубликованными ASR и utility"): our frozen traces next to the published runs ->
+  # results/traces_stats.json (counts and rates only, seed- and mode-independent: the smoke report reads the same file)
+  "$PY" -m flyguard.gen.trace_stats
+  "$PY" scripts/make_report.py "${SMOKE_FLAG[@]}"
+}
 run_check() {
   # smoke: the suite (about 3 min) is not part of the 15-minute skeleton run; the real run executes it inline
   if [[ $SMOKE == 1 ]]; then "$PY" scripts/check_acceptance.py --smoke --pytest skip; else "$PY" scripts/check_acceptance.py; fi
@@ -308,22 +357,48 @@ run_check() {
 # Driver
 # ---------------------------------------------------------------------------------------------------------------
 in_list() { local x; for x in ${2//,/ }; do [[ "$x" == "$1" ]] && return 0; done; return 1; }
+stage_index() { local i; for i in "${!STAGES[@]}"; do [[ "${STAGES[$i]}" == "$1" ]] && { echo "$i"; return 0; }; done; echo -1; }
+GUARD_READERS=(e1 e6)   # the stages that read the guard score cache prescore fills (the contract has no guard variant)
+guard_reader_ahead() {           # a guard reader runs in this invocation: at or after --from and not --skip'ped
+  local s i0; i0=$(stage_index "${FROM:-${STAGES[0]}}")
+  for s in "${GUARD_READERS[@]}"; do
+    if (( $(stage_index "$s") >= i0 )) && ! in_list "$s" "$SKIP"; then return 0; fi
+  done
+  return 1
+}
 T0=$(date +%s)
 RUN_STATUS=ok
-[[ $DRY == 1 ]] || logline RUN start 0 "args: smoke=$SMOKE from=${FROM:-} only=${ONLY:-} skip=${SKIP:-} seeds=${SEEDS:-config}"
+if [[ $DRY == 0 ]]; then
+  GUARD_THREADS="$(yaml_get configs/default.yaml baselines.transformers.num_threads 2>/dev/null)" || GUARD_THREADS=""
+  CAPS="jobs=$JOBS nproc=$NPROC seed_thread_cap=$SEED_THREADS"
+  if [[ $JOBS -gt 1 && $SMOKE == 0 ]]; then CAPS+=" (OMP/MKL/OPENBLAS/NUMEXPR_NUM_THREADS of every parallel seed process)"
+  else CAPS+=" (not applied: seeds run in one process)"; fi
+  CAPS+=" inherited_OMP_NUM_THREADS=${OMP_NUM_THREADS:-unset} guard_threads=${GUARD_THREADS:-unknown}"
+  logline RUN start 0 "args: smoke=$SMOKE from=${FROM:-} only=${ONLY:-} skip=${SKIP:-} seeds=${SEEDS:-config} $CAPS"
+fi
 started=$([[ -z "$FROM" ]] && echo 1 || echo 0)
 for stage in "${STAGES[@]}"; do
   [[ -n "$ONLY" && "$stage" != "$ONLY" ]] && continue
   [[ "$stage" == "$FROM" ]] && started=1
-  [[ $started == 1 ]] || continue
-  if in_list "$stage" "$SKIP"; then [[ $DRY == 1 ]] || logline "$stage" skip 0 "--skip"; say "skip $stage (--skip)"; continue; fi
+  why=""
+  if [[ $started == 0 ]]; then
+    # prescore is skipped only when done: before --from it still runs when a guard reader is ahead (header)
+    if [[ "$stage" == prescore ]] && guard_reader_ahead; then why="prerequisite of --from $FROM"; else continue; fi
+  fi
+  if in_list "$stage" "$SKIP"; then
+    if [[ "$stage" == prescore && -z "$ONLY" ]] && guard_reader_ahead && [[ "$(stage_done prescore)" != done ]]; then
+      why="--skip prescore ignored: its done predicate does not hold"
+    else
+      [[ $DRY == 1 ]] || logline "$stage" skip 0 "--skip"; say "skip $stage (--skip)"; continue
+    fi
+  fi
   # seeds (and the venv python) are needed from the data stages on; setup_env/fetch/gen_* run without them
   case "$stage" in setup_env|fetch|gen_traces|gen_paraphrases) ;; *) [[ -n "$SEEDS" ]] || SEEDS="$(seeds_from_config)" ;; esac
   if [[ -z "$ONLY" && "$(stage_done "$stage")" == "done" ]]; then
-    [[ $DRY == 1 ]] || logline "$stage" skip 0 "done"; say "skip $stage (done)"; continue
+    [[ $DRY == 1 ]] || logline "$stage" skip 0 "done${why:+; $why}"; say "skip $stage (done${why:+; $why})"; continue
   fi
-  if [[ $DRY == 1 ]]; then say "would run $stage"; continue; fi
-  note="$(stage_note "$stage")"
+  if [[ $DRY == 1 ]]; then say "would run $stage${why:+ ($why)}"; continue; fi
+  note="$(stage_note "$stage")"; note="${note}${why:+${note:+; }$why}"
   logline "$stage" start 0 "$note"
   say "start $stage${note:+ ($note)}"
   t=$(date +%s)

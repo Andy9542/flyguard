@@ -34,7 +34,8 @@ Protocol (one global seed, 0 by default -- the contract exchanges one CSV, not t
    ``eval.metrics.contract_metrics_by_variant`` overall (``contract/<metric>/<detector>``) and per benchmark
    (``contract/<benchmark>/<metric>/<detector>``; AgentDyn carries the honest FPR, contract §10; intervals for the
    two headline rates only, :func:`benchmark_metrics`). Smoke runs write under ``results/smoke/`` and never touch
-   the shared CSV or manifest.
+   the shared CSV or manifest. ``contract.json`` carries ``config_hash``, ``git_commit``, ``git_dirty`` and
+   ``timing.threads`` (``results.provenance``, ASSUMPTIONS A41/A52).
 
 Test windows are opened only through the context door, under the memo keys ``<source>#contract_trainval``
 (before fitting), ``<source>#contract_val`` and ``<source>#contract_test`` (after the thresholds are set).
@@ -56,7 +57,7 @@ import pandas as pd
 from flyguard.agentdojo_io import labels as L
 from flyguard.agentdojo_io.contract import (MANIFEST_LISTS, VARIANTS as CSV_VARIANTS, ContractRow, split_manifest,
                                             validate_csv, write_csv, write_split_manifest)
-from flyguard.config import ROOT, Configs, config_hash, git_commit, load_configs, seeds_for
+from flyguard.config import ROOT, Configs, config_hash, load_configs, seeds_for
 from flyguard.eval.bootstrap import cluster_bootstrap
 from flyguard.eval.metrics import contract_frame, contract_metrics_by_variant, contract_point_metrics, doc_scores
 from flyguard.eval.thresholds import contract_threshold
@@ -503,12 +504,14 @@ def run(ctx: Context | None = None, seed: int = 0, smoke: bool = False, *, root:
     n_before = len(ctx.test_reads)
     try:
         payload = contract_body(fc, root, smoke, dojo_negatives=dojo_negatives)
+        prov = results_mod.provenance(root)   # git_commit, git_dirty, threads (ASSUMPTIONS A41/A52)
         payload.update({
-            "experiment": EXPERIMENT, "seed": int(seed), "config_hash": config_hash(root), "git_commit": git_commit(root),
+            "experiment": EXPERIMENT, "seed": int(seed), "config_hash": config_hash(root),
+            "git_commit": prov["git_commit"], "git_dirty": prov["git_dirty"],
             "seeds": dict(fc.seeds), "smoke": bool(smoke),
             "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "timing": {"seconds": time.perf_counter() - t0, "cache_bytes": fc.cache_bytes(),
-                       "test_reads": [s for s, _ in ctx.test_reads[n_before:]]},
+                       "test_reads": [s for s, _ in ctx.test_reads[n_before:]], "threads": prov["threads"]},
         })
         payload["notes"].append(f"seed children: {fc.seeds}")
         atomic_write_json(out, payload)

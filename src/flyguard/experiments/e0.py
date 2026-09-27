@@ -38,7 +38,9 @@ verdicts and ``run_all.sh --smoke`` has no ``--force`` -- but archives and recor
 
 The per-seed result file holds the same numbers under stable keys (``size/<source>/n_pos``,
 ``power/<cell>/<level>/mdd`` ...), the tables ``carriers`` (источник × метрика -> статус), ``cells``, ``sizes``,
-``spread_values`` and ``val_auc``, and ``stage`` / ``frozen`` as top-level fields.
+``spread_values`` and ``val_auc``, and ``stage`` / ``frozen`` as top-level fields. ``power.json`` carries the code
+provenance of every results writer (``results.provenance``, ASSUMPTIONS A41/A52): ``git_commit``, ``git_dirty`` and
+``timing.threads``; the π-permutation fits run under ``threadpool_limits(1)`` like the engine's fits.
 """
 from __future__ import annotations
 
@@ -50,9 +52,10 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
+from threadpoolctl import threadpool_limits
 
 from flyguard import fly, nose
-from flyguard.config import ROOT, Configs, config_hash, git_commit, load_configs, seeds_for
+from flyguard.config import ROOT, Configs, config_hash, load_configs, seeds_for
 from flyguard.eval.metrics import auc, macro_auc
 from flyguard.eval.power import power_table
 from flyguard.experiments import results as results_mod
@@ -162,7 +165,10 @@ def validation_runs(fc: FeatureContext, n_null: int, perm_seeds: Sequence[int],
         macro, _ = _val_macro(fc, fc.score_windows(f, val_ws), val_ws)
         out["curveball_val_macro_auc"].append(macro)
         out["curveball_gamma"].append(float(f.choices["gamma"]))
-    # π permutations: the SVD of this seed with the perm child of every global seed (ТЗ 2.1: π is seed variance)
+    # π permutations: the SVD of this seed with the perm child of every global seed (ТЗ 2.1: π is seed variance).
+    # The randomized TruncatedSVD and the fits run with the BLAS/OpenMP pools pinned to one thread, as the engine's
+    # N51-svd and ``FeatureContext.fit`` do (ASSUMPTIONS A41): at 8 vs 16 threads the SVD features differed by up to
+    # 2e-3, which would make the π spread depend on ``run_all.sh --jobs``.
     X_unl, X_tr, X_vd, X_va = (fc.features("n16k", w) for w in ("c_unl", tr, vd, val_ws))
     M = fc.matrix("measured")
     m = int(M.shape[0])
@@ -170,10 +176,12 @@ def validation_runs(fc: FeatureContext, n_null: int, perm_seeds: Sequence[int],
     gammas = [float(g) for g in cfg.default["readout"]["bloom"]["gammas"]]
     sub = fc.seeds["subsample"]
     for sp in perm_seeds:
-        n51 = nose.N51Svd(rank=fc.d_glom, seed_svd=fc.seeds["svd"], seed_perm=int(sp)).fit(X_unl)
-        Z_tr, Z_vd, Z_va = (fly.fly_code(n51.transform(X), M, k) for X in (X_tr, X_vd, X_va))
-        gamma, _ = select_gamma(Z_tr, tr.labels, Z_vd, vd.labels, m, k, seed_subsample=sub, gammas=gammas, cfg=cfg)
-        model = BloomReadout(m, k, gamma, seed_subsample=sub).fit(Z_tr, tr.labels)
+        with threadpool_limits(limits=1):
+            n51 = nose.N51Svd(rank=fc.d_glom, seed_svd=fc.seeds["svd"], seed_perm=int(sp)).fit(X_unl)
+            Z_tr, Z_vd, Z_va = (fly.fly_code(n51.transform(X), M, k) for X in (X_tr, X_vd, X_va))
+            gamma, _ = select_gamma(Z_tr, tr.labels, Z_vd, vd.labels, m, k, seed_subsample=sub, gammas=gammas,
+                                    cfg=cfg)
+            model = BloomReadout(m, k, gamma, seed_subsample=sub).fit(Z_tr, tr.labels)
         scores = pd.Series(np.asarray(model.score(Z_va), dtype=float), index=val_ws.window_ids)
         macro, _ = _val_macro(fc, scores, val_ws)
         out["perm_val_macro_auc"].append(macro)
@@ -209,9 +217,11 @@ def build_power(fc: FeatureContext, rb: ResultBuilder, stage: int,
     for levels in table["cells"].values():   # ``power`` = the TOST power under the report's column name (additive alias)
         for cell in levels.values():
             cell.setdefault("power", cell.get("tost_power"))
+    prov = results_mod.provenance(ctx.root)
     table.update({
         "experiment": "E0", "stage": int(stage), "frozen": stage == 2, "created_at": _stamp(),
-        "config_hash": config_hash(ctx.root), "git_commit": git_commit(ctx.root), "seed": int(fc.seed),
+        "config_hash": config_hash(ctx.root), "git_commit": prov["git_commit"], "git_dirty": prov["git_dirty"],
+        "timing": {**dict(table.get("timing") or {}), "threads": prov["threads"]}, "seed": int(fc.seed),
         "seeds": dict(fc.seeds), "smoke": bool(ctx.smoke), "sources": list(ctx.test_sources),
         "sizes_extra": sizes_extra, "val_runs": val,
         "provenance": {"sizes": "aggregate label/cluster counts of the E1 test documents (journaled read, counts "

@@ -25,8 +25,15 @@ E1 validation choices, the cross-dataset test sources, the cluster bootstrap of 
 Keys follow :mod:`flyguard.experiments.results`; every variant is paired with its E1 base detector on the same
 cluster draws (``diff/macro_auc/<variant>-<base>``), so a sensitivity is read as an effect with an interval, not
 as two point estimates. ``run(ctx, seed, smoke, parts=...)`` selects parts (E6 is first on the ТЗ cut list); the
-default parts are the flags set in ``E6.yaml``. Test windows are opened only through the context door (the E6
-BIPIA variants under the memo key ``bipia#e6``); this module never reads a data file itself.
+default parts are the flags set in ``E6.yaml``, and in smoke mode only those of them listed in ``smoke.e6_parts``
+(ASSUMPTIONS A54: the transformer-heavy ``bipia_all`` and ``tok512`` and the FlyHash-40 coding pass run in the real
+run only). :func:`resolve_parts` is the single rule of which parts run -- the guard prescoring stage reads it to
+decide whether the E6 BIPIA variants and the 512-token windows need scores. Every part gets a row of the table
+``parts`` (``выполнено`` / ``не выполнено в смоуке`` / ``выключено в E6.yaml`` / ``не запрошено`` / ``не хватило
+данных`` with the reason), mirrored in the top-level field ``e6_parts``, so the report renders the parts a smoke run
+left out. Test windows are opened only through the context door (the E6 BIPIA variants under the memo key
+``bipia#e6``); this module never reads a data file itself. :func:`bipia_all_frame` and :func:`tok512_documents` are
+the exact window / document sets ``bipia_all`` and ``tok512`` score, shared with the prescoring stage.
 """
 from __future__ import annotations
 
@@ -60,6 +67,11 @@ ALL_PARTS = tuple(PART_FLAGS) + OPT_IN_PARTS
 STRATA_SOURCES = ("deep", "bipia", "dojo", "dyn", "para_deep", "para_shallow")
 DERIVED_TABLES = ("para_deep", "para_shallow", "bipia_all")
 TOK512 = "_tok512"
+STATUS_RUN = "выполнено"
+STATUS_SMOKE = "не выполнено в смоуке"
+STATUS_OFF = "выключено в E6.yaml"
+STATUS_NOT_REQUESTED = "не запрошено"
+STATUS_NO_DATA = "не хватило данных"
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -79,11 +91,7 @@ def e6_config(cfg: Configs) -> dict[str, Any]:
     }
 
 
-def resolve_parts(cfg: Configs, parts: Iterable[str] | None = None) -> tuple[str, ...]:
-    """``None`` -> the parts enabled in ``E6.yaml``; otherwise the given names (validated, order kept)."""
-    if parts is None:
-        flags = e6_config(cfg)["flags"]
-        return tuple(p for p in PART_FLAGS if flags.get(p))
+def _validated(parts: Iterable[str]) -> tuple[str, ...]:
     out: list[str] = []
     for p in parts:
         if p not in ALL_PARTS:
@@ -91,6 +99,52 @@ def resolve_parts(cfg: Configs, parts: Iterable[str] | None = None) -> tuple[str
         if p not in out:
             out.append(p)
     return tuple(out)
+
+
+def smoke_parts(cfg: Configs) -> tuple[str, ...] | None:
+    """``smoke.e6_parts`` (validated), or ``None`` when the smoke profile does not restrict E6."""
+    listed = cfg.default.get("smoke", {}).get("e6_parts")
+    return None if listed is None else _validated(str(p) for p in listed)
+
+
+def resolve_parts(cfg: Configs, parts: Iterable[str] | None = None, smoke: bool = False) -> tuple[str, ...]:
+    """The E6 parts a run executes: the given names (validated, order kept) when ``parts`` is not ``None``;
+    otherwise the parts enabled in ``E6.yaml``, and in smoke mode only those of them in ``smoke.e6_parts``
+    (ASSUMPTIONS A54). The guard prescoring stage calls this with ``parts=None`` to learn whether ``bipia_all`` and
+    ``tok512`` will ask for transformer scores."""
+    if parts is not None:
+        return _validated(parts)
+    flags = e6_config(cfg)["flags"]
+    enabled = tuple(p for p in PART_FLAGS if flags.get(p))
+    allowed = smoke_parts(cfg) if smoke else None
+    return enabled if allowed is None else tuple(p for p in enabled if p in allowed)
+
+
+def part_status(cfg: Configs, run_parts: Sequence[str], smoke: bool, explicit: bool,
+                outcomes: Mapping[str, str | None] | None = None) -> list[dict[str, Any]]:
+    """One row ``{part, status, reason}`` per known part (the ``parts`` table): why a part did or did not run.
+    ``outcomes`` maps a run part to the reason it produced nothing (``не хватило данных``), ``None`` when it ran."""
+    flags = e6_config(cfg)["flags"]
+    allowed = smoke_parts(cfg) if smoke else None
+    outcomes = dict(outcomes or {})
+    rows: list[dict[str, Any]] = []
+    for part in ALL_PARTS:
+        flag = PART_FLAGS.get(part)
+        if part in run_parts:
+            why = outcomes.get(part)
+            status, reason = (STATUS_RUN, None) if why is None else (STATUS_NO_DATA, why)
+        elif explicit:
+            status, reason = STATUS_NOT_REQUESTED, "not in the parts requested for this run"
+        elif flag is None:
+            status, reason = STATUS_NOT_REQUESTED, "opt-in part (run(..., parts=[...]) / --parts)"
+        elif not flags.get(part):
+            status, reason = STATUS_OFF, f"E6.yaml {flag}: false"
+        elif allowed is not None and part not in allowed:
+            status, reason = STATUS_SMOKE, "not in smoke.e6_parts (ASSUMPTIONS A54); runs in the real run"
+        else:   # pragma: no cover - resolve_parts returns every enabled, allowed part
+            status, reason = STATUS_NOT_REQUESTED, None
+        rows.append({"part": part, "status": status, "flag": flag, "reason": reason})
+    return rows
 
 
 def _tag(value: float) -> str:
@@ -221,13 +275,14 @@ def part_tau80(rb: ResultBuilder, ev: Evaluator, doc_tables: Mapping[str, pd.Dat
 
 
 def part_para_shallow(rb: ResultBuilder, ev: Evaluator, doc_tables: dict[str, pd.DataFrame], dets: Sequence[str],
-                      pairs: Sequence[tuple[str, str, str]]) -> None:
-    """The shallow paraphrase stratum as its own source and the macroAUC over the strata-split sources."""
+                      pairs: Sequence[tuple[str, str, str]]) -> str | None:
+    """The shallow paraphrase stratum as its own source and the macroAUC over the strata-split sources; returns the
+    reason when there is nothing to evaluate, ``None`` otherwise."""
     _rederive_para(doc_tables)
     shallow = doc_tables.get("para_shallow")
     if shallow is None:
         rb.note("para_shallow: no shallow paraphrase documents in the test tables; part skipped")
-        return
+        return "no shallow paraphrase documents in the test tables"
     for det in dets:
         if _two_class(shallow, det):
             rb.add_number(f"auc/para_shallow/{det}", None, ev.auc_ci(shallow, det))
@@ -240,27 +295,55 @@ def part_para_shallow(rb: ResultBuilder, ev: Evaluator, doc_tables: dict[str, pd
             _add_diff(rb, ev, "macro_auc_strata", {s: doc_tables[s] for s in STRATA_SOURCES if s in doc_tables}, a, b)
         elif metric == "auc/para_deep":
             _add_diff(rb, ev, "auc/para_shallow", {"para_shallow": shallow}, a, b)
+    return None
 
 
-def part_bipia_all(fc: FeatureContext, rb: ResultBuilder, ev: Evaluator, fitted: Mapping[str, FittedDetector],
-                   doc_tables: dict[str, pd.DataFrame], pairs: Sequence[tuple[str, str, str]]) -> None:
-    """All BIPIA attack names x positions (ТЗ 1.4, meta ``variant == "e6"``) as the source ``bipia_all``.
-
-    The set is the main test pairs (clean + the sampled attack of every context) plus the E6 variants of the same
-    contexts, opened through the door under ``bipia#e6``; dedup-excluded windows are dropped as in every test set.
-    Negatives of every marginal and cell are all clean documents; positives are the attacked documents of that
-    position / attack name / cell. Marginals carry cluster-bootstrap CIs, cells are point AUCs (``bipia_attacks``).
-    """
+def bipia_all_frame(fc: FeatureContext) -> pd.DataFrame | None:
+    """The windows ``bipia_all`` scores: the main BIPIA test windows plus the E6 variants of the test contexts
+    (``splits.json bipia.e6_docs.test``, opened through the door under ``bipia#e6``), dedup-excluded windows dropped
+    on both halves; ``None`` without BIPIA test documents or E6 variants. Shared with the guard prescoring stage."""
     ctx = fc.ctx
     ids = list((ctx.splits.get("bipia") or {}).get("e6_docs", {}).get("test", []))
     if "bipia" not in ctx.test_sources or not ids:
-        rb.note("bipia_all: no E6 BIPIA variants listed in splits.json (bipia.e6_docs.test); part skipped")
-        return
+        return None
     extra = ctx.load_test_windows("bipia", fc.purpose, doc_ids=ids, name="e6")
     if "dedup_excluded" in extra.columns:
         extra = extra[~extra["dedup_excluded"].fillna(False).astype(bool)]
     main = fc.window_set("test:bipia").frame
-    frame = pd.concat([main, extra], ignore_index=True).drop_duplicates("window_id")
+    return pd.concat([main, extra], ignore_index=True).drop_duplicates("window_id")
+
+
+def tok512_documents(fc: FeatureContext) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
+    """The documents ``tok512`` re-windows with each model's tokenizer: per E1 test source the test documents with at
+    least one window left after dedup (exactly the documents of that source's E1 document table, since document
+    scores are taken over non-excluded windows), and every P_val document (the τ_FPR pool). Frames ``doc_id, text``
+    (``text`` = the normalised document text of ``documents.parquet``). The E6 BIPIA variants are not re-windowed.
+    Shared with the guard prescoring stage."""
+    ctx = fc.ctx
+    by_source: dict[str, pd.DataFrame] = {}
+    for s in ctx.test_sources:
+        ids = set(fc.window_set(f"test:{s}").frame["doc_id"])
+        docs = ctx.test_documents(s, fc.purpose)
+        by_source[s] = docs.loc[docs["doc_id"].isin(ids), ["doc_id", "text"]].reset_index(drop=True)
+    p_val = ctx.documents_for(sorted(ctx.p_val_doc_ids))[["doc_id", "text", "cluster_id"]].reset_index(drop=True)
+    return by_source, p_val
+
+
+def part_bipia_all(fc: FeatureContext, rb: ResultBuilder, ev: Evaluator, fitted: Mapping[str, FittedDetector],
+                   doc_tables: dict[str, pd.DataFrame], pairs: Sequence[tuple[str, str, str]]) -> str | None:
+    """All BIPIA attack names x positions (ТЗ 1.4, meta ``variant == "e6"``) as the source ``bipia_all``.
+
+    The set is the main test pairs (clean + the sampled attack of every context) plus the E6 variants of the same
+    contexts, opened through the door under ``bipia#e6``; dedup-excluded windows are dropped as in every test set
+    (:func:`bipia_all_frame`). Negatives of every marginal and cell are all clean documents; positives are the
+    attacked documents of that position / attack name / cell. Marginals carry cluster-bootstrap CIs, cells are point
+    AUCs (``bipia_attacks``). Returns the reason when the part has no data, ``None`` otherwise.
+    """
+    ctx = fc.ctx
+    frame = bipia_all_frame(fc)
+    if frame is None:
+        rb.note("bipia_all: no E6 BIPIA variants listed in splits.json (bipia.e6_docs.test); part skipped")
+        return "no E6 BIPIA variants in splits.json (bipia.e6_docs.test)"
     ws = fc.register_set("bipia_all", frame)
     df = fc.doc_frame(fc.score_many(fitted, ws), ws)
     meta = ctx.documents_for(df["doc_id"].tolist())["meta"].tolist()
@@ -302,24 +385,27 @@ def part_bipia_all(fc: FeatureContext, rb: ResultBuilder, ev: Evaluator, fitted:
     for metric, a, b in pairs:
         if metric in ("auc/bipia", "macro_auc") and a in dets and b in dets:
             _add_diff(rb, ev, "auc/bipia_all", {"bipia_all": df}, a, b)
+    return None
 
 
 def part_tok512(fc: FeatureContext, rb: ResultBuilder, ev: Evaluator, fitted: Mapping[str, FittedDetector],
-                doc_tables: dict[str, pd.DataFrame], tpr80: float | None) -> None:
+                doc_tables: dict[str, pd.DataFrame], tpr80: float | None) -> str | None:
     """The transformer detectors on their own 512-token windows (``GuardModel.score_long``, document score = max
     over token windows), named ``<guard>_tok512`` and paired with the 256-character version of the same model.
 
     Whole documents are re-windowed by the model's tokenizer, so a document's 256-character windows that dedup
     excluded are still part of its token windows (noted): the comparison is between the two windowings of the
-    same documents, the ТЗ 1.3 rule being character windows for every detector and token windows only here.
+    same documents, the ТЗ 1.3 rule being character windows for every detector and token windows only here. The
+    documents are :func:`tok512_documents` (the set the prescoring stage caches). Returns the reason when the part
+    has nothing to score, ``None`` otherwise.
     """
     ctx = fc.ctx
     guards = [n for n, f in fitted.items() if f.available and f.spec.kind == "guard"]
     if not guards:
         rb.note("tok512: no available transformer detector; part skipped")
-        return
+        return "no available transformer detector"
     sources = [s for s in doc_tables if s not in DERIVED_TABLES]
-    p_val_docs = ctx.documents_for(sorted(ctx.p_val_doc_ids))
+    test_docs, p_val_docs = tok512_documents(fc)
     p_val = pd.DataFrame({"doc_id": p_val_docs["doc_id"].to_numpy(), "label": 0,
                           "cluster_id": p_val_docs["cluster_id"].astype(str).to_numpy()})
     names: dict[str, str] = {}
@@ -328,7 +414,7 @@ def part_tok512(fc: FeatureContext, rb: ResultBuilder, ev: Evaluator, fitted: Ma
         name = f"{g}{TOK512}"
         names[name] = g
         for s in sources:
-            docs = ctx.test_documents(s, fc.purpose)
+            docs = test_docs[s]
             docs = docs[docs["doc_id"].isin(set(doc_tables[s]["doc_id"]))]
             scores = pd.Series(gm.score_long(docs["text"].astype(str).tolist()), index=docs["doc_id"].to_numpy())
             doc_tables[s][name] = doc_tables[s]["doc_id"].map(scores).astype(float).to_numpy()
@@ -379,6 +465,7 @@ def part_tok512(fc: FeatureContext, rb: ResultBuilder, ev: Evaluator, fitted: Ma
                 if base_rec is not None and base in ni.columns:
                     ci = ev.rate_diff_ci(ni, name, tau, base, float(base_rec["value"]))
                     rb.add_number(f"diff/fpr_notinject/{tkey}/{name}-{base}", None, ci, p=bootstrap_p(ci.samples))
+    return None
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -390,12 +477,14 @@ def e6_body(fc: FeatureContext, rb: ResultBuilder, parts: Iterable[str] | None =
     need more than a detector name (τ_80, para_shallow, bipia_all, tok512) and the latency of the variants whose
     pipeline cost differs from their base."""
     cfg, ctx = fc.cfg, fc.ctx
-    parts = resolve_parts(cfg, parts)
+    explicit = parts is not None
+    parts = resolve_parts(cfg, parts, smoke=ctx.smoke)
     c = e6_config(cfg)
     specs, base_of, variants = e6_detectors(cfg, parts, ctx.guard_names())
     rb.add_table("variants", variants)
     rb.note(f"E6 parts: {list(parts)}; k_fracs={c['k_fracs']}, gammas={c['gammas']}, tau_tpr={c['tau_tpr']}, "
             f"expansions={c['expansions']}")
+    outcomes: dict[str, str | None] = {}
     fitted = fc.fit_many(list(specs.values()))
     pairs = list(DEFAULT_PAIRS) + [("macro_auc", v, b) for v, b in base_of.items()]
     h2 = list(H2_PAIRS) + [(v, b) for v, b in base_of.items()]
@@ -409,11 +498,11 @@ def e6_body(fc: FeatureContext, rb: ResultBuilder, parts: Iterable[str] | None =
     if "tau80" in parts:
         part_tau80(rb, ev, doc_tables, dets, tpr80, h2)
     if "para_shallow" in parts:
-        part_para_shallow(rb, ev, doc_tables, dets, pairs)
+        outcomes["para_shallow"] = part_para_shallow(rb, ev, doc_tables, dets, pairs)
     if "bipia_all" in parts:
-        part_bipia_all(fc, rb, ev, fitted, doc_tables, pairs)
+        outcomes["bipia_all"] = part_bipia_all(fc, rb, ev, fitted, doc_tables, pairs)
     if "tok512" in parts:
-        part_tok512(fc, rb, ev, fitted, doc_tables, tpr80)
+        outcomes["tok512"] = part_tok512(fc, rb, ev, fitted, doc_tables, tpr80)
     lat_set = "test:deep" if "deep" in ctx.test_sources else f"test:{ctx.test_sources[0]}"
     for row in variants:
         if row["part"] in ("k", "weighted", "flyhash40") and fitted[row["detector"]].available:
@@ -421,6 +510,14 @@ def e6_body(fc: FeatureContext, rb: ResultBuilder, parts: Iterable[str] | None =
             if lat is not None:
                 rb.add_number(f"latency_ms/{row['detector']}", lat["ms_per_doc"], n=lat["n_docs"])
     rb.note(f"E6 detectors: {len(dets)} available of {len(specs)}; variants: {len(variants)}")
+    status = part_status(cfg, parts, ctx.smoke, explicit, outcomes)
+    rb.add_table("parts", status)
+    rb.extra["e6_parts"] = {"run": list(parts), "smoke": bool(ctx.smoke), "explicit": bool(explicit),
+                            "status": {r["part"]: r["status"] for r in status}}
+    skipped = [r["part"] for r in status if r["status"] == STATUS_SMOKE]
+    if skipped:
+        rb.note(f"E6 smoke: parts {skipped} не выполнено в смоуке (smoke.e6_parts, ASSUMPTIONS A54); their numbers "
+                f"come from the real run")
 
 
 def run(ctx: Context | None = None, seed: int = 0, smoke: bool = False, *, root: Path = ROOT, cfg: Configs | None = None,

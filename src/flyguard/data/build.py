@@ -2,7 +2,8 @@
 
 load raw -> normalise -> language -> E1 split -> (smoke subset) -> windows -> dedup -> contamination (ТЗ 3.2) ->
 splits -> pools -> audit -> ``data/processed/{documents,windows,episodes}.parquet`` +
-``data/manifests/{splits,pools,dedup,contamination}.json`` + ``audit.md``.
+``data/manifests/{splits,pools,dedup,contamination}.json`` + ``audit.md``. A smoke build skips the contamination
+audit when ``smoke.contamination_audit`` is false and writes a skip note instead (:func:`smoke_contamination_note`).
 Stage 1 (``--without-traces``) uses deepset, BIPIA, NotInject; the full stage adds dojo/dyn/para when their files
 and the extraction module exist. Both stages rewrite every output from scratch, so re-running is safe.
 """
@@ -146,6 +147,25 @@ def smoke_subset(documents: pd.DataFrame, cfg: Configs) -> pd.DataFrame:
     return documents[documents["doc_id"].isin(set(keep))].reset_index(drop=True)
 
 
+# ------------------------------------------------------------------------------------- smoke contamination
+
+def smoke_contamination_audit(cfg: Configs) -> bool:
+    """Whether a smoke build repeats the ТЗ 3.2 contamination audit (``smoke.contamination_audit``, default true)."""
+    return bool(cfg.default.get("smoke", {}).get("contamination_audit", True))
+
+
+def smoke_contamination_note(cfg: Configs) -> dict[str, Any]:
+    """The ``contamination.json`` of a smoke build that skips the audit (ASSUMPTIONS A54): the counts-only overlap
+    with the PIGuard training set is a property of the full tables and is reported from the full build's
+    ``data/manifests/contamination.json``; re-measuring it on the 200-document smoke subset only costs time (it
+    streams the whole PIGuard set). ``audit.md`` renders the note as a skipped section."""
+    return {"skipped": True, "smoke": True, "train_file": str(audit_mod.PIGUARD_TRAIN),
+            "note": ("smoke: the ТЗ 3.2 contamination audit is not repeated on the smoke subset "
+                     "(smoke.contamination_audit false, ASSUMPTIONS A54); the numbers are those of the full build, "
+                     "data/manifests/contamination.json"),
+            "model_cards": audit_mod.MODEL_CARDS, "threats_to_validity": audit_mod.THREATS_TO_VALIDITY}
+
+
 # ------------------------------------------------------------------------------------------------ build
 
 def load_sources(cfg: Configs, root: Path, without_traces: bool, access_log=None, smoke: bool = False) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -213,7 +233,10 @@ def build_all(cfg: Configs | None = None, without_traces: bool = False, smoke: b
     windows = build_windows(documents, cfg)
     windows, dropped, dedup_report = dedup_windows(documents, windows, cfg)
     documents["dedup_dropped"] = documents["doc_id"].isin(dropped)
-    contamination = audit_mod.contamination_audit(cfg, documents, windows, root, access_log)   # ТЗ 3.2, after dedup
+    if smoke and not smoke_contamination_audit(cfg):
+        contamination = smoke_contamination_note(cfg)
+    else:
+        contamination = audit_mod.contamination_audit(cfg, documents, windows, root, access_log)   # ТЗ 3.2, after dedup
     if contamination.get("skipped"):
         info["notes"].append(f"contamination audit skipped: {contamination.get('note')}")
     episodes_dojo = info["episodes"].get("agentdojo")

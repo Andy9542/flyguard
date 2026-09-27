@@ -29,7 +29,10 @@ point(s) ``{source, detector, fpr, tpr, threshold}`` of every detector whose doc
 most two distinct values (the regexes), which the figure draws as points.
 
 Guards are timed (``latency_ms/protectai_v2`` ...) only for the first seed of a run by default (``latency_guards=
-"auto"``): a forward pass over 200 documents does not depend on the seed and is the most expensive step of E1.
+"auto"``): a forward pass over 200 documents does not depend on the seed and is the most expensive step of E1. In
+smoke mode they are never timed while ``smoke.guard_latency`` is false (ASSUMPTIONS A54: an uncached forward pass
+of three models is a large share of the 15-minute smoke budget), whatever ``latency_guards`` says; the note of the
+seed file records it and the real run times them.
 """
 from __future__ import annotations
 
@@ -186,9 +189,26 @@ def e1_body(fc: FeatureContext, rb: ResultBuilder, latency_guards: bool = False)
             f"detectors={names}, available={available}, latency_guards={latency_guards}")
     if missing:
         rb.note(f"E1: test sources absent from the tables at this stage: {missing} (their keys are not written)")
+    if ctx.smoke and not latency_guards and not bool(cfg.default.get("smoke", {}).get("guard_latency", True)):
+        rb.note("E1 smoke: transformer latency not measured (smoke.guard_latency false, ASSUMPTIONS A54); "
+                "не выполнено в смоуке, measured in the real run")
     rb.extra["e1"] = {"sources": sources, "missing_sources": missing, "detectors": names, "available": available,
                       "latency_guards": bool(latency_guards)}
     return out
+
+
+def guard_latency_for(seed: int, seeds: Sequence[int], latency_guards: str | bool, cfg: Configs,
+                      smoke: bool = False) -> bool:
+    """Whether seed ``seed`` of a run over ``seeds`` times the transformer guards: ``"auto"`` = the first seed only,
+    ``"always"`` / ``True``, ``"never"`` / ``False``; in smoke mode False unless ``smoke.guard_latency`` is true
+    (ASSUMPTIONS A54)."""
+    if smoke and not bool(cfg.default.get("smoke", {}).get("guard_latency", True)):
+        return False
+    if latency_guards in ("always", True):
+        return True
+    if latency_guards in ("never", False):
+        return False
+    return int(seed) == int(list(seeds)[0])
 
 
 def run_e1(seeds: Sequence[int], smoke: bool = False, root: Path = ROOT, cfg: Configs | None = None,
@@ -197,19 +217,15 @@ def run_e1(seeds: Sequence[int], smoke: bool = False, root: Path = ROOT, cfg: Co
            cache: bool = True) -> list[Path]:
     """Run E1 for ``seeds`` (one shared :class:`Context`, so test files are read and journaled once per process),
     then rewrite ``results/E1/summary.json``. ``latency_guards``: ``"auto"`` = the first seed of ``seeds`` only,
-    ``"always"`` / ``True``, ``"never"`` / ``False``. Seeds whose result file is current are skipped unless ``force``."""
+    ``"always"`` / ``True``, ``"never"`` / ``False`` (:func:`guard_latency_for`; never in smoke mode while
+    ``smoke.guard_latency`` is false). Seeds whose result file is current are skipped unless ``force``."""
     root = Path(root)
     cfg = cfg or load_configs(root)
     ctx = ctx or Context(cfg, smoke=smoke, root=root, access_log=access_log)
     seeds = [int(s) for s in seeds]
     paths: list[Path] = []
     for s in seeds:
-        if latency_guards in ("always", True):
-            lg = True
-        elif latency_guards in ("never", False):
-            lg = False
-        else:
-            lg = s == seeds[0]
+        lg = guard_latency_for(s, seeds, latency_guards, cfg, smoke)
         runner = Runner("E1", s, smoke=smoke, root=root, cfg=cfg, ctx=ctx, keep_cache=keep_cache, force=force,
                         access_log=access_log, guard_factory=guard_factory, cache=cache)
         paths.append(runner.run(lambda fc, rb, lg=lg: e1_body(fc, rb, latency_guards=lg)))

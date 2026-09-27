@@ -218,6 +218,16 @@ class FittedDetector:
         return total
 
 
+def bloom_balance_choices(model: Any) -> dict[str, Any]:
+    """The class counts a Bloom readout was fitted on (``balanced_counts_``) as the list and as two scalars.
+
+    Why the scalars: the ``detectors`` table of a result keeps only scalar choices (:func:`standard_evaluation`), and
+    the acceptance criterion "Bloom обучен на сбалансированных классах" (``check_acceptance.c_bloom``) needs the
+    actual counts of every fit, not only ``readout.bloom.balance`` of the config."""
+    counts = [int(c) for c in model.balanced_counts_]
+    return {"balanced_counts": counts, "balanced_n0": counts[0], "balanced_n1": counts[1]}
+
+
 def _parse_int_suffix(kind: str, prefix: str) -> int | None:
     rest = kind[len(prefix):]
     return int(rest.lstrip(":")) if rest else None
@@ -595,7 +605,7 @@ class FeatureContext:
                         gamma = float(spec.gamma)
                         choices.update({"gamma": gamma, "gamma_source": "fixed"})
                     model = BloomReadout(m, k, gamma, seed_subsample=seed, normalized=spec.normalized).fit(Z, y)
-                    choices["balanced_counts"] = [int(c) for c in model.balanced_counts_]
+                    choices.update(bloom_balance_choices(model))
                 else:
                     model, choices = self._fit_linear(Z, y, Zv, y_val, spec, seed)
         elif spec.kind == "lexical":
@@ -674,7 +684,7 @@ class FeatureContext:
             model = models[gamma]
             choices = {"gamma": gamma, "gamma_source": "val", "gamma_table": {str(g): float(a) for g, a in table.items()},
                        "val_auc_window": float(table[gamma])}
-        choices["balanced_counts"] = [int(c) for c in model.balanced_counts_]
+        choices.update(bloom_balance_choices(model))
         return model, choices
 
     def _fit_linear(self, Z: Any, y: np.ndarray, Zv: Any, y_val: np.ndarray, spec: DetectorSpec,

@@ -185,6 +185,10 @@ def test_e6_parts_and_detector_set(toy_cfg):
     assert "flyhash_linear_k2.5" in opt and e6.resolve_parts(toy_cfg, ["gamma", "gamma"]) == ("gamma",)
     with pytest.raises(KeyError):
         e6.resolve_parts(toy_cfg, ["nope"])
+    smoke = e6.resolve_parts(toy_cfg, smoke=True)                   # A54: E6.yaml flags ∩ smoke.e6_parts
+    assert set(smoke) == set(toy_cfg.default["smoke"]["e6_parts"]) and not {"bipia_all", "tok512", "flyhash40"} & set(smoke)
+    st = {r["part"]: r["status"] for r in e6.part_status(toy_cfg, smoke, True, False, {"para_shallow": "no data"})}
+    assert st["tok512"] == e6.STATUS_SMOKE and st["k"] == e6.STATUS_RUN and st["para_shallow"] == e6.STATUS_NO_DATA
 
 
 def test_e6_result_covers_every_part(e6_result, e6_ctx):
@@ -219,6 +223,9 @@ def test_e6_result_covers_every_part(e6_result, e6_ctx):
     assert {r["part"] for r in tables["variants"]} == {"k", "gamma", "weighted", "normalized", "flyhash40"}
     assert "bipia#e6" in e6_result["timing"]["test_reads"] and any("bipia#e6" in c[2] for c in e6_ctx.recorder.calls)
     assert e6_result["config_hash"] == config_hash(e6_ctx.root) and any("tok512" in n for n in e6_result["notes"])
+    status = {r["part"]: r["status"] for r in tables["parts"]}
+    assert status == {**{p: e6.STATUS_RUN for p in e6.PART_FLAGS}, "k_flyhash": e6.STATUS_NOT_REQUESTED}
+    assert e6_result["e6_parts"]["status"] == status and "git_dirty" in e6_result
 
 
 def test_e6_parts_subset_skip_and_summary(e6_ctx, e6_root, gf, e6_result):
@@ -228,6 +235,7 @@ def test_e6_parts_subset_skip_and_summary(e6_ctx, e6_root, gf, e6_result):
     assert "auc/deep/real_fly_bloom_k2.5" in keys and "auc/deep/real_fly_linear_k10" in keys
     assert not any("_gamma" in k or "tok512" in k or "bipia_all" in k or "weighted" in k for k in keys)
     assert not any(k.startswith("tau80") for k in r["thresholds"]) and "auc/para_shallow/tfidf_lr" not in keys
+    assert {x["part"]: x["status"] for x in r["tables"]["parts"]}["gamma"] == e6.STATUS_NOT_REQUESTED
     mtime = path.stat().st_mtime_ns
     assert e6.run(e6_ctx, 1, root=e6_root, guard_factory=gf, parts=("k",)) == path and path.stat().st_mtime_ns == mtime
     summ = summarize("E6", root=e6_root)
@@ -275,6 +283,7 @@ def test_contract_csv_rows_thresholds_and_metrics(contract, e6_root):
     assert nums["contract/n_test_episodes"]["value"] == len(test_eps) and nums["contract/n_hijacked/real_fly_bloom"]["value"] == 3
     assert nums["contract/n_unmatched/real_fly_bloom"]["value"] == 0 and nums["contract/n_benign/tfidf_lr"]["value"] == 5
     assert set(res["metrics"]) == set(contract_run.VARIANTS) and set(res["metrics_by_benchmark"]) == {"agentdojo", "agentdyn"}
+    assert "git_dirty" in res and "pools" in res["timing"]["threads"]              # A41/A52 provenance
     assert res["config_hash"] == config_hash(e6_root) and res["smoke"] is False and res["seed"] == 0
 
 

@@ -1,12 +1,50 @@
 #!/usr/bin/env bash
 # Download and checksum all data and models (ТЗ 1.1), build the MaleCNS graph with `flypath build`,
 # and write data/manifests/sources.json. Idempotent: existing files with a matching sha256 are kept.
+#
+#   scripts/fetch.sh               download, verify, build, write the manifest (files + pins)
+#   scripts/fetch.sh --pins-only   rewrite only the "pins" of an existing sources.json from the constants below
+#                                  (no download, no rehash, the file list and its "generated" stamp are kept)
+#
+# Why --pins-only: the pins (harness commits and versions, cited in REPORT.md section 2) can change after the files
+# were fetched (ASSUMPTIONS A53 added the AgentDojo commit). A full rerun is not a safe way to refresh them: the
+# 1 GB MaleCNS weights file is deleted after hashing (A10), so a rerun would drop its sha256 entry and rebuild R.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$ROOT"
 LOG="$ROOT/logs/network.log"; mkdir -p logs data/raw data/manifests
 netlog() { printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" "$4" >> "$LOG"; }
 MANIFEST=data/manifests/sources.json
 TMP_MANIFEST="$(mktemp)"; echo "[]" > "$TMP_MANIFEST"
+
+# write_manifest <files.json> [pins-only]: data/manifests/sources.json = the pins below + the file list
+write_manifest() {
+  python3 - "$1" "$MANIFEST" "${2:-}" <<'PY'
+import json, sys, datetime
+tmp, out, mode = sys.argv[1:4]
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+d = {"generated": now,
+     "pins": {"agentdojo": {"package": "0.1.35", "repo": "https://github.com/ethz-spylab/agentdojo", "benchmark_version": "v1.2.2",
+                            "tag": "v0.1.35", "commit": "a75aba7631d3ca5fb7ab938965c97ead2f9ff84b"},   # release tag of the installed package
+              "agentdyn": {"repo": "https://github.com/SaFo-Lab/AgentDyn", "commit": "5353cf7615b135cace8d07c8f12dac53a16b6db3", "benchmark_version": "v1.2.2"},
+              "flyhash_connectome": {"repo": "https://github.com/ssenge/FlyHash-Connectome", "commit": "91caf384abe291814d58e9563aa9713386d65a25"},
+              "malecns": {"version": "v1.0", "minconf": 0.5, "bucket": "gs://flyem-male-cns/v1.0/"}},
+     "files": json.load(open(tmp))}
+if mode == "pins-only":   # keep the fetch stamp of the file list; record when the pins were rewritten
+    d["generated"] = json.load(open(out)).get("generated")
+    d["pins_written"] = now
+json.dump(d, open(out, "w"), indent=1, sort_keys=True)
+print("manifest:", out, len(d["files"]), "files", "(pins only)" if mode == "pins-only" else "")
+PY
+}
+
+if [[ "${1:-}" == --pins-only ]]; then
+  [[ -f "$MANIFEST" ]] || { echo "$MANIFEST missing: run scripts/fetch.sh first" >&2; exit 1; }
+  python3 -c 'import json, sys; json.dump(json.load(open(sys.argv[1]))["files"], open(sys.argv[2], "w"))' "$MANIFEST" "$TMP_MANIFEST"
+  write_manifest "$TMP_MANIFEST" pins-only
+  exit 0
+elif [[ $# -gt 0 ]]; then
+  echo "usage: scripts/fetch.sh [--pins-only]" >&2; exit 2
+fi
 
 # dl <url> <dest> <purpose> [expected_sha256]
 dl() {
@@ -118,17 +156,5 @@ for r in agentdojo AgentDyn; do
   fi
 done
 
-python3 - "$TMP_MANIFEST" "$MANIFEST" <<'PY'
-import json, sys, datetime
-tmp, out = sys.argv[1:3]
-d = {"generated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-     "pins": {"agentdojo": {"package": "0.1.35", "repo": "https://github.com/ethz-spylab/agentdojo", "benchmark_version": "v1.2.2",
-                            "tag": "v0.1.35", "commit": "a75aba7631d3ca5fb7ab938965c97ead2f9ff84b"},   # release tag of the installed package
-              "agentdyn": {"repo": "https://github.com/SaFo-Lab/AgentDyn", "commit": "5353cf7615b135cace8d07c8f12dac53a16b6db3", "benchmark_version": "v1.2.2"},
-              "flyhash_connectome": {"repo": "https://github.com/ssenge/FlyHash-Connectome", "commit": "91caf384abe291814d58e9563aa9713386d65a25"},
-              "malecns": {"version": "v1.0", "minconf": 0.5, "bucket": "gs://flyem-male-cns/v1.0/"}},
-     "files": json.load(open(tmp))}
-json.dump(d, open(out, "w"), indent=1, sort_keys=True)
-print("manifest:", out, len(d["files"]), "files")
-PY
+write_manifest "$TMP_MANIFEST"
 echo "fetch done"

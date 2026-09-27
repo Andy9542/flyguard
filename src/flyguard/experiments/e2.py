@@ -9,7 +9,9 @@ point``, drawn without replacement from ``SeedSequence([subsample, shots, rep])`
 linear fly, TF-IDF + LR, kNN(1), nearest centroid) is fitted on the subsample and scored on every positive test
 source. γ and C are chosen on the deepset validation windows *per fit*, i.e. separately for every shot level and
 subsample (ТЗ 2.4: "γ по валидации, отдельно для few-shot и полного обучения"); the per-rep choices are tabulated and
-the modal choice per level is a number.
+the modal choice per level is a number. Smoke mode draws ``smoke.subsamples_per_point`` subsamples per level instead
+(:func:`subsamples_per_point`, ASSUMPTIONS A54: 3 instead of 10); the number used is in the notes and in
+``fewshot_levels.n_reps``.
 
 Statistics: one set of cluster draws (``eval.bootstrap.macro_auc_draws``; clusters resampled inside each source,
 ``n`` draws from the ``bootstrap`` child) serves every fit at once, so the curve of a detector, its band and the paired
@@ -99,6 +101,16 @@ def shot_levels(shots: Sequence[Any]) -> list[int | str]:
             raise ValueError(f"duplicate shot level {s!r}")
         out.append(v)
     return out
+
+
+def subsamples_per_point(cfg: Configs, smoke: bool = False) -> int:
+    """Subsamples per shot level: ``E2.yaml subsamples_per_point`` (ТЗ: 10), or ``smoke.subsamples_per_point`` in
+    smoke mode when the smoke profile sets it (ASSUMPTIONS A54)."""
+    if smoke:
+        sm = cfg.default.get("smoke", {}).get("subsamples_per_point")
+        if sm is not None:
+            return int(sm)
+    return int(cfg.exp(EXPERIMENT)["subsamples_per_point"])
 
 
 def fit_name(det: str, level: int | str, rep: int) -> str:
@@ -275,10 +287,13 @@ def run_e2(fc: FeatureContext, rb: ResultBuilder, detectors: Sequence[str] | Non
     """The E2 body: fit the curve, score every positive test source once, write numbers and tables into ``rb``.
     Returns the document tables and the fitted index (for tests and the report's figures)."""
     e2 = fc.cfg.exp(EXPERIMENT)
+    ctx = fc.ctx
     detectors = list(detectors if detectors is not None else e2["detectors"])
     levels = shot_levels(shots if shots is not None else e2["shots"])
-    n_reps = int(n_reps if n_reps is not None else e2["subsamples_per_point"])
-    ctx = fc.ctx
+    n_reps = int(n_reps if n_reps is not None else subsamples_per_point(fc.cfg, ctx.smoke))
+    if ctx.smoke and n_reps != int(e2["subsamples_per_point"]):
+        rb.note(f"E2 smoke: {n_reps} subsamples per shot level instead of {int(e2['subsamples_per_point'])} "
+                f"(smoke.subsamples_per_point, ASSUMPTIONS A54); the real run draws {int(e2['subsamples_per_point'])}")
     sources = list(sources if sources is not None else [s for s in ctx.test_sources if s != "notinject"])
     ev = Evaluator(fc)
 

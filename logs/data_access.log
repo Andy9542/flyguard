@@ -587,3 +587,34 @@
 2026-09-27T01:32:55Z	test	/tmp/claude-1000/-home-ubuntu-projects-flyguard/8d58349d-5f53-407e-ae70-4d0e426fa951/scratchpad/stage1_root/data/processed/documents.parquet	experiments.context.load_test_windows(bipia): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
 2026-09-27T01:32:55Z	test	/tmp/claude-1000/-home-ubuntu-projects-flyguard/8d58349d-5f53-407e-ae70-4d0e426fa951/scratchpad/stage1_root/data/processed/windows.parquet	experiments.context.load_test_windows(notinject): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
 2026-09-27T01:32:55Z	test	/tmp/claude-1000/-home-ubuntu-projects-flyguard/8d58349d-5f53-407e-ae70-4d0e426fa951/scratchpad/stage1_root/data/processed/documents.parquet	experiments.context.load_test_windows(notinject): E0 stage 1 seed=0: label/cluster counts of the test documents (sizes only; no text, no scores)
+2026-09-27T03:00:16Z	test	data/paraphrases/paraphrases.csv	check_acceptance: paraphrase freeze audit (judge verdicts, Jaccard, banned words; texts read by code only, never printed)
+2026-09-27T03:00:16Z	test	data/paraphrases/calls.jsonl	check_acceptance: paraphrase freeze audit (judge verdicts, Jaccard, banned words; texts read by code only, never printed)
+2026-09-27T03:00:16Z	test	data/paraphrases/judgements.jsonl	check_acceptance: paraphrase freeze audit (judge verdicts, Jaccard, banned words; texts read by code only, never printed)
+2026-09-27T03:00:16Z	test	data/paraphrases/bases.jsonl	check_acceptance: paraphrase freeze audit (judge verdicts, Jaccard, banned words; texts read by code only, never printed)
+2026-09-27T03:00:46Z	test	data/processed/smoke/documents.parquet	check_acceptance: manifest completeness (doc_id/source/split/meta columns only, no text)
+2026-09-27T03:00:46Z	test	data/processed/smoke/windows.parquet	check_acceptance: dedup invariants (columns id/split/label/cluster/hash/meta only, no text)
+2026-09-27T03:00:46Z	test	data/processed/smoke/documents.parquet	check_acceptance: dedup invariants (columns id/split/label/cluster/hash/meta only, no text)
+2026-09-27T03:00:46Z	test	data/processed/smoke/windows.parquet	check_acceptance: window scheme (start/end columns only, no text)
+2026-09-27T03:01:13Z	test	data/processed/smoke/windows.parquet	retroactive (review round 2, core fixer): window counts by role/split of the smoke subset to size the guard prescoring selection; counts only, no text, no scores, read after the fact without the door
+2026-09-27T03:01:13Z	test	results/shared/traces_manifest.json	retroactive (review round 2, core fixer): dry run of flyguard.gen.trace_stats (episode classes, utility/security counts per suite; no text), nothing written
+2026-09-27T03:01:13Z	external	/home/ubuntu/projects/flyguard/data/ext/published_runs_agentdojo/runs	retroactive (review round 2, core fixer): dry run of flyguard.gen.trace_stats, scalar fields only
+2026-09-27T03:01:13Z	external	/home/ubuntu/projects/flyguard/data/ext/published_runs_AgentDyn/runs	retroactive (review round 2, core fixer): dry run of flyguard.gen.trace_stats, scalar fields only
+2026-09-27T03:19:59Z	test	results/shared/traces_manifest.json	flyguard.gen.trace_stats: episode classes, utility and security per suite of the frozen traces (manifest fields only, no text) for the comparison with the published runs
+2026-09-27T03:19:59Z	external	/home/ubuntu/projects/flyguard/data/ext/published_runs_agentdojo/runs	flyguard.gen.trace_stats: scalar fields (utility, security, error) of the published agentdojo runs; messages never read into results or printed
+2026-09-27T03:20:01Z	external	/home/ubuntu/projects/flyguard/data/ext/published_runs_AgentDyn/runs	flyguard.gen.trace_stats: scalar fields (utility, security, error) of the published agentdyn runs; messages never read into results or printed
+2026-09-27T03:24:07Z	test	data/paraphrases/paraphrases.csv	check_acceptance: paraphrase freeze audit (judge verdicts, Jaccard, banned words; texts read by code only, never printed)
+2026-09-27T03:24:07Z	test	data/paraphrases/calls.jsonl	check_acceptance: paraphrase freeze audit (judge verdicts, Jaccard, banned words; texts read by code only, never printed)
+2026-09-27T03:24:07Z	test	data/paraphrases/judgements.jsonl	check_acceptance: paraphrase freeze audit (judge verdicts, Jaccard, banned words; texts read by code only, never printed)
+2026-09-27T03:24:07Z	test	data/paraphrases/bases.jsonl	check_acceptance: paraphrase freeze audit (judge verdicts, Jaccard, banned words; texts read by code only, never printed)
+2026-09-27T03:24:35Z	test	data/processed/smoke/documents.parquet	check_acceptance: manifest completeness (doc_id/source/split/meta columns only, no text)
+2026-09-27T03:24:35Z	test	data/processed/smoke/windows.parquet	check_acceptance: dedup invariants (columns id/split/label/cluster/hash/meta only, no text)
+2026-09-27T03:24:35Z	test	data/processed/smoke/documents.parquet	check_acceptance: dedup invariants (columns id/split/label/cluster/hash/meta only, no text)
+2026-09-27T03:24:35Z	test	data/processed/smoke/windows.parquet	check_acceptance: window scheme (start/end columns only, no text)
+2026-09-27T03:36:52Z	test	data/paraphrases/paraphrases.csv	check_acceptance: paraphrase freeze audit (judge verdicts, Jaccard, banned words; texts read by code only, never printed)
+2026-09-27T03:36:52Z	test	data/paraphrases/calls.jsonl	check_acceptance: paraphrase freeze audit (judge verdicts, Jaccard, banned words; texts read by code only, never printed)
+2026-09-27T03:36:52Z	test	data/paraphrases/judgements.jsonl	check_acceptance: paraphrase freeze audit (judge verdicts, Jaccard, banned words; texts read by code only, never printed)
+2026-09-27T03:36:52Z	test	data/paraphrases/bases.jsonl	check_acceptance: paraphrase freeze audit (judge verdicts, Jaccard, banned words; texts read by code only, never printed)
+2026-09-27T03:37:20Z	test	data/processed/smoke/documents.parquet	check_acceptance: manifest completeness (doc_id/source/split/meta columns only, no text)
+2026-09-27T03:37:20Z	test	data/processed/smoke/windows.parquet	check_acceptance: dedup invariants (columns id/split/label/cluster/hash/meta only, no text)
+2026-09-27T03:37:20Z	test	data/processed/smoke/documents.parquet	check_acceptance: dedup invariants (columns id/split/label/cluster/hash/meta only, no text)
+2026-09-27T03:37:20Z	test	data/processed/smoke/windows.parquet	check_acceptance: window scheme (start/end columns only, no text)

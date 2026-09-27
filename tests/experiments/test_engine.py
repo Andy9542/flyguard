@@ -13,7 +13,8 @@ from flyguard.baselines.transformers_guard import GuardModel
 from flyguard.config import config_hash
 from flyguard.experiments import (Context, FeatureContext, Runner, detector_spec, engine, fly_spec, read_result,
                                   standard_evaluation, summarize)
-from flyguard.experiments.results import number, result_path, summarize_numbers, write_result
+from flyguard.experiments.results import (git_dirty, number, provenance, result_path, summarize, summarize_numbers,
+                                          write_result)
 from flyguard.readout import LinearReadout
 
 NAMES = ["regex", "tfidf_lr", "knn1", "knn5", "centroid", "lr_svd", "real_fly_bloom", "real_fly_linear",
@@ -190,7 +191,9 @@ def test_fit_records_validation_choices(fc, fitted, toy_cfg):
     few = fc.fit("real_fly_bloom", train=fc.fewshot_set(1, 0))
     assert few.n_train == fc.fewshot_set(1, 0).n and "gamma_table" in few.choices
     fixed = fc.fit(fly_spec("g99", gamma=0.99, k_frac=0.25))
-    assert fixed.choices == {"gamma": 0.99, "gamma_source": "fixed", "balanced_counts": fixed.choices["balanced_counts"]}
+    n0, n1 = fixed.choices["balanced_counts"]
+    assert fixed.choices == {"gamma": 0.99, "gamma_source": "fixed", "balanced_counts": [n0, n1], "balanced_n0": n0,
+                             "balanced_n1": n1} and n0 == n1 > 0            # scalars reach the detectors table (c_bloom)
     assert fixed.model.k == fc.k_for(12, 0.25)
     no_kc = fc.fit(fly_spec("nose_only", nose="n51_svd", matrix=None, readout="linear"))
     assert no_kc.model.model_.coef_.shape == (1, 6)
@@ -297,3 +300,33 @@ def test_results_helpers(tmp_path):
     p = write_result("E9", 3, {"m/x": 0.25}, {"t": [{"k": 1}]}, {"tau": {"value": 0.5, "source": "s", "target": "t", "n": 1}},
                      ["ok"], smoke=True, root=tmp_path)
     assert p == tmp_path / "results" / "smoke" / "E9" / "3.json" and read_result(p)["numbers"]["m/x"]["value"] == 0.25
+
+
+def test_provenance_git_dirty_and_commit_warnings(tmp_path):
+    """A52: every writer records git_commit / git_dirty / threads; summaries warn about mixed commits and dirty trees."""
+    import json
+    import subprocess
+
+    assert git_dirty(tmp_path) is None and set(provenance(tmp_path)) == {"git_commit", "git_dirty", "threads"}
+    run = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)  # noqa: E731
+    run("init", "-q")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x = 1\n")
+    (tmp_path / "notes.md").write_text("journal\n")
+    assert git_dirty(tmp_path) is True                              # untracked code
+    run("add", "src")
+    run("-c", "user.email=t@example.org", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "c")
+    assert git_dirty(tmp_path) is False                             # an untracked journal is not code
+    p0 = write_result("E9", 0, {"m/x": 0.1}, {}, {}, [], root=tmp_path)
+    r0 = read_result(p0)
+    assert r0["git_dirty"] is False and len(r0["git_commit"]) == 40 and "pools" in r0["timing"]["threads"]
+    (tmp_path / "src" / "a.py").write_text("x = 2\n")
+    p1 = write_result("E9", 1, {"m/x": 0.2}, {}, {}, [], root=tmp_path)
+    assert read_result(p1)["git_dirty"] is True
+    summ = summarize("E9", root=tmp_path)
+    assert summ["git_dirty"] == {"0": False, "1": True} and any("git_dirty" in w for w in summ["warnings"])
+    assert not any("git_commit differs" in w for w in summ["warnings"])
+    r1 = json.loads(p1.read_text())
+    r1["git_commit"] = "0" * 40
+    p1.write_text(json.dumps(r1))
+    assert any("git_commit differs" in w for w in summarize("E9", root=tmp_path)["warnings"])

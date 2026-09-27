@@ -78,11 +78,16 @@ def write_results(root: Path) -> None:
     thresholds.update({f"tau90_deep/{d}": {"value": 0.3, "source": "deep test positives", "target": "TPR=0.9", "n": 40} for d in DETS})
     tables = {"detectors": [{"detector": d, "kind": "fly" if "fly" in d else "lexical", "fit_seconds": 0.5 + i} for i, d in enumerate(DETS)],
               "sources": [{"source": s, "n_docs": 100 + i, "n_pos": 40, "n_neg": 60 + i, "n_clusters": 90} for i, s in enumerate(SOURCES)]}
+    grid = (0.0, 0.01, 0.05, 0.1, 0.5, 1.0)     # e1.roc_tables layout: TPR on a common FPR grid; regex as points
+    tables["roc"] = [{"source": s, "detector": d, "fpr": f, "tpr": min(1.0, f + 0.3 + 0.05 * i)}
+                     for i, d in enumerate(("tfidf_lr", "real_fly_bloom", "protectai_v2", "regex")) for s in ("deep", "bipia") for f in grid]
+    tables["roc_points"] = [{"source": s, "detector": "regex", "fpr": 0.1, "tpr": 0.4, "threshold": 1.0} for s in ("deep", "bipia")]
     for seed in (0, 1):
         write_result("E1", seed, e1_numbers(seed), tables, thresholds, ["test reads: 6; bootstrap n=60, alpha=0.05", f"seed children: {{'nose': {seed}}}"],
                      root=root, seeds={"nose": seed}, timing={"seconds": 12.5 + seed, "test_reads": ["deep", "bipia"]})
     # E2: fewshot/<metric>/<level>/<detector> (e2.level_key -> shots<k> | full), paired diffs per level
-    e2 = {f"fewshot/macro_auc/{lvl}/{d}": number(None, ci(0.5 + 0.05 * i + 0.1 * j, 0.03), n_reps=10)
+    e2 = {f"fewshot/macro_auc/{lvl}/{d}": number(None, ci(0.5 + 0.05 * i + 0.1 * j, 0.03), n_reps=10,
+                                                  band_low=0.4 + 0.05 * i + 0.1 * j, band_high=0.6 + 0.05 * i + 0.1 * j)
           for i, d in enumerate(("real_fly_bloom", "knn1", "tfidf_lr")) for j, lvl in enumerate(("shots1", "shots10", "shots100", "full"))}
     e2["diff/macro_auc/shots1/real_fly_bloom-knn1"] = number(None, ci(0.01, 0.04), p=0.6)
     e2["diff90/macro_auc/shots1/real_fly_bloom-knn1"] = number(None, ci(0.01, 0.03, level=0.9), n_reps=10)
@@ -166,9 +171,40 @@ def write_side_files(root: Path, current_hash: str) -> None:
                                                                    "rule": {"mod": 3, "rem": 2}, "counts": {"test": 591, "observation": 49, "validation_clean": 52, "validation_attacks": 0, "train_attacks": 0}})
     atomic_write_json(root / "data/manifests/traces_extraction.json", {"agentdojo": {"n_logs": 1046, "documents": 3840, "documents_positive": 700, "steps_total": 3900, "steps_labelled": 690,
                                                                                      "attacked_without_span": {"count": 7}, "errors": 0}})
+    write_report_inputs(root, stamp(now - timedelta(hours=3)))
     (root / "DEVIATIONS.md").write_text("# Отклонения\n\n- **D1 (2026-09-26).** Один провайдер.\n- **D10 (2026-09-26).** Журнал задним числом (retroactive).\n", encoding="utf-8")
     (root / "ASSUMPTIONS.md").write_text("- **A1.** x\n", encoding="utf-8")
     (root / "BLOCKERS.md").write_text("- **B1.** x\n", encoding="utf-8")
+
+
+def write_report_inputs(root: Path, created: str) -> None:
+    """Inputs of report sections 3, 4, 5 and 9: traces_stats.json (schema of flyguard.gen.trace_stats), the counts of
+    contamination.json, an audit.md with the section headings of flyguard.data.audit, the E0 stage-1 table."""
+    pub = {m: {"workspace": {"targeted_asr": a, "utility_clean": u, "n_attacked": 560, "n_clean": 40}}
+           for m, a, u in (("model-a", 0.1, 0.8), ("model-b", 0.25, 0.7), ("model-c", 0.4, 0.6))}
+    atomic_write_json(root / "results/traces_stats.json", {
+        "ours": {"agentdojo": {"workspace": {"n_attacked": 560, "n_hijacked": 71, "targeted_asr": 0.1268, "n_clean": 40,
+                                             "utility_clean": 0.9, "utility_under_attack": 0.72}}},
+        "published": {"agentdojo": pub}, "published_source": "https://github.com/x/agentdojo@abc123, data/ext/runs",
+        "same_model_published": False, "notes": ["agentdojo: 3 undefended models, 1680 logs read"]})
+    lvl = lambda n, m: {"documents": n, "documents_matched": m, "share": round(m / n, 4)}  # noqa: E731
+    atomic_write_json(root / "data/manifests/contamination.json", {
+        "skipped": False, "document_level": {"deep": {"train": {"0": lvl(274, 274), "1": lvl(162, 162)}, "test": {"0": lvl(56, 1), "1": lvl(60, 3)}},
+                                             "bipia": {"test": {"0": lvl(140, 14), "1": lvl(140, 5)}}},
+        "window_level": {"deep": {"test": {"0": {"windows": 58, "windows_matched": 1, "share": 0.0172}}}},
+        "targeted_containment": {"deep": {"tags": ["prompt-injections"], "by_split": {"test": {"documents": 116, "ours_in_piguard": 8, "piguard_in_ours": 7}}}},
+        "model_cards": {"protectai_v2": {"model": "protectai/deberta-v3-base-prompt-injection-v2", "training_datasets_on_card": ["VMware/open-instruct"],
+                                         "named_overlap_with_our_sources": "none of the listed datasets"}},
+        "threats_to_validity": ["NotInject, PIGuard and AgentDyn share a first author", "BIPIA is part of the PIGuard authors' test set"]})
+    (root / "data/manifests/audit.md").write_text(
+        "# Аудит данных (ТЗ 1.2)\n\n## Документы по источникам\n| источник | документов | test |\n|---|---|---|\n| deep | 662 | 116 |\n\n"
+        "## Окна (ТЗ 1.3)\n| источник | окон | окон на документ |\n|---|---|---|\n| deep | 777 | 1.17 |\n\n"
+        "## Языки (langdetect, сид из конфига)\n| источник | en | non-en |\n|---|---|---|\n| deep | 355 | 307 |\n\n"
+        "Доля немецкого в deepset:\n\n| часть | de | доля de |\n|---|---|---|\n| all | 265 | 40.0 % |\n", encoding="utf-8")
+    atomic_write_json(root / "results/E0/power_stage1.json", {
+        "stage": 1, "frozen": False, "created_at": created, "sizes": {"deep": {"n_pos": 41, "n_neg": 55, "n_clusters": 96}},
+        "carriers": {"deep": {"auc": "несёт"}}, "planning_level": {"deep": 0.75},
+        "cells": {"deep": {"0.75": {"mdd": 0.09, "delta": 0.0375, "tost_power": 0.4, "status": "не хватило данных"}}}})
 
 
 @pytest.fixture(scope="module")
@@ -222,8 +258,12 @@ def leaf_values(node) -> list:
 
 
 def close(tok: str, values: list) -> bool:
+    """Exact after the rendering format (no tolerance): an integer token needs an integral value, a token with d
+    decimals a value that formats to it; strings contain it as a whole number."""
     dec = len(tok.split(".")[1]) if "." in tok else 0
-    return any((isinstance(v, str) and tok in v) or (not isinstance(v, str) and abs(float(tok) - v) <= 0.5 * 10 ** (-dec) + 1e-9)
+    whole = re.compile(rf"(?<![\d.]){re.escape(tok)}(?!\d|\.\d)")
+    return any(bool(whole.search(v)) if isinstance(v, str) else
+               ((float(v).is_integer() and int(v) == int(tok)) if dec == 0 else float(f"{v:.{dec}f}") == float(tok))
                for v in values)
 
 
@@ -246,15 +286,21 @@ def test_every_number_is_found_in_the_referenced_json(report_root):
     assert all(re.search(rf"^## {i}\. ", text, re.M) for i in range(1, 11))
     assert "| tfidf_lr |" in text and "results/E1/summary.json#numbers/macro_auc/tfidf_lr" in text
     assert "подтверждена" in text and "results/verdicts.json#H1b/real_fly/status" in text
-    # two seeds: the seed t-interval is rendered, not an average of bootstrap bounds
+    # two seeds (A55): the mean over seeds with the envelope of the per-seed bootstrap intervals, then sd and n_seeds
     s = json.loads((report_root / "results/E1/summary.json").read_text(encoding="utf-8"))
     rec = s["numbers"]["macro_auc/tfidf_lr"]
-    assert f"{rec['mean']:.3f} [{rec['seed_ci_low']:.3f}, {rec['seed_ci_high']:.3f}] (results/E1/summary.json#numbers/macro_auc/tfidf_lr)" in text
+    lo, hi = min(r["ci_low"] for r in rec["per_seed"].values()), max(r["ci_high"] for r in rec["per_seed"].values())
+    assert (f"{rec['mean']:.3f} [{lo:.3f}, {hi:.3f}] (results/E1/summary.json#numbers/macro_auc/tfidf_lr); "
+            f"sd {rec['sd']:.3f}, сидов 2") in text
+    assert "seed_ci" not in text and "t-интервал" not in text
     figs = {p.name for p in (report_root / "results/figures").glob("*.png")}
-    assert {"e1_auc_by_source.png", "e2_learning_curves.png", "e4_curveball_hist.png", "e1_notinject_fpr_tau90.png", "para_strata_auc.png"} <= figs
+    assert {"e1_roc_by_source.png", "e1_auc_by_source.png", "e2_learning_curves.png", "e4_curveball_hist.png",
+            "e1_notinject_fpr_tau90.png", "para_strata_auc.png"} <= figs
+    assert "![ROC-кривые E1 по источникам" in text and "| `roc` |" not in text     # the curves are a figure, not a dump
     # section 2 lists the commits the results were computed on, apart from the commit the report is rendered on
     assert "**Коммиты, на которых посчитаны результаты**" in text
-    assert "(results/E1/summary.json#git_commits) | 0, 1 |" in text and "(results/verdicts.json#git_commit)" in text
+    assert "(results/E1/summary.json#git_commits) | 0, 1 (results/E1/summary.json#seeds) |" in text
+    assert "(results/verdicts.json#git_commit)" in text and "(results/E0/power_stage1.json#git_commit)" in text
     assert "Коммит, на котором собран отчёт:" in text
 
 
@@ -263,7 +309,7 @@ def test_report_renders_without_any_experiment(tmp_path):
     shutil.copytree(ROOT / "configs", root / "configs")
     text, path = mr.render(root, smoke=False, figures=False)
     assert all(re.search(rf"^## {i}\. ", text, re.M) for i in range(1, 11))
-    assert text.count("не выполнено") >= 10
+    assert text.count("не выполнено") >= 10 and "results/traces_stats.json нет" in text
     assert mr.trace_numbers(text, root)[1] == []
     text_s, path_s = mr.render(root, smoke=True, figures=False)
     assert path_s == root / "results/smoke/REPORT.md" and (root / "results/smoke/setup.json").exists()
@@ -275,6 +321,118 @@ def test_verifier_catches_wrong_and_unreferenced_numbers(report_root):
     _, problems = mr.trace_numbers(text, report_root)
     assert len(problems) == 2 and any("0.123" in p for p in problems) and any("without reference" in p for p in problems)
     assert mr.trace_numbers("Смотри ТЗ 1.7, §6 и Этап 4; H1a; N16k; `x = 512`\n", report_root)[1] == []
+
+
+def test_seed_summary_is_mean_with_bootstrap_envelope_and_spread():
+    """ASSUMPTIONS A55: several seeds -> the mean, the envelope [min ci_low, max ci_high] of the per-seed cluster
+    bootstrap intervals, then sd and n_seeds; one seed -> its own value and interval. A seed-independent detector keeps
+    its bootstrap width instead of the zero-width t-interval of the seed mean. ROC rows are averaged per FPR point."""
+    from types import SimpleNamespace
+
+    per = {"0": {"value": 0.8, "ci_low": 0.7, "ci_high": 0.9}, "1": {"value": 0.8, "ci_low": 0.72, "ci_high": 0.88},
+           "2": {"value": 0.8, "ci_low": 0.69, "ci_high": 0.91}}
+    rec = {"mean": 0.8, "sd": 0.0, "n_seeds": 3, "seed_ci_low": 0.8, "seed_ci_high": 0.8, "per_seed": per}
+    assert mr.rec_triple(rec) == (0.8, 0.69, 0.91)
+    assert mr.rec_num({"numbers": {"k": rec}}, "results/E1/summary.json", "k") == \
+        "0.800 [0.690, 0.910] (results/E1/summary.json#numbers/k); sd 0.000, сидов 3"
+    one = {"mean": 0.8, "n_seeds": 1, "per_seed": {"4": {"value": 0.81, "ci_low": 0.7, "ci_high": 0.9}}}
+    assert mr.rec_triple(one) == (0.81, 0.7, 0.9) and "сидов" not in mr.rec_num({"numbers": {"k": one}}, "p.json", "k")
+    roc = [{"source": "deep", "detector": "tfidf_lr", "fpr": 0.1, "tpr": t, "seed": s} for s, t in ((0, 0.2), (1, 0.4))]
+    roc.append({"source": "deep", "detector": "knn5", "fpr": 0.1, "tpr": 0.9, "seed": 0})          # not a figure detector
+    pts = [{"source": "deep", "detector": "regex", "fpr": f, "tpr": 0.5, "threshold": 1.0, "seed": s} for s, f in ((0, 0.1), (1, 0.3))]
+    curves, points = mr.roc_data(SimpleNamespace(summaries={"E1": {"tables": {"roc": roc, "roc_points": pts}}}))
+    assert curves == {"deep": {"tfidf_lr": [(0.1, pytest.approx(0.3))]}} and points == {"deep": {"regex": [(pytest.approx(0.2), 0.5)]}}
+
+
+def test_verifier_is_exact(tmp_path):
+    """No tolerance: an integer token needs an integral value, a decimal token a value that renders to it; strings
+    contain the token as a whole number; dotted versions are not numbers of the report."""
+    atomic_write_json(tmp_path / "r.json", {"a": 0.9, "b": 2.6, "c": 3, "d": 0.1234, "s": "reason 0.4 and 12 items"})
+    ok = lambda line: mr.trace_numbers(line + "\n", tmp_path)[1] == []  # noqa: E731
+    assert not ok("x 1 (r.json#a)") and ok("x 0.9 (r.json#a)") and ok("x 0.900 (r.json#a)")
+    assert not ok("x 3 (r.json#b)") and ok("x 3 (r.json#c)") and ok("x 3.0 (r.json#c)")
+    assert ok("x 0.123 (r.json#d)") and not ok("x 0.124 (r.json#d)")
+    assert ok("x 0.4 and 12 (r.json#s)") and not ok("x 4 (r.json#s)") and not ok("x 1 (r.json#s)")
+    assert ok("Python 3.11.14 без ссылки") and not ok("x 7 без ссылки")
+
+
+def test_report_sections_render_manifests_traces_and_threats(report_root):
+    text, _ = mr.render(report_root, smoke=False, figures=False)
+    assert mr.trace_numbers(text, report_root)[1] == []
+    sec = lambda i: text.split(f"\n## {i}. ")[1].split("\n## ")[0]  # noqa: E731
+    s2, s3, s4, s5, s9, s10 = sec(2), sec(3), sec(4), sec(5), sec(9), sec(10)
+    snapshot = json.loads((report_root / "results/report_derived.json").read_text(encoding="utf-8"))
+    derived = snapshot["entries"]
+    from flyguard.config import config_hash
+
+    assert snapshot["config_hash"] == config_hash(report_root) and "git_commit" in snapshot and snapshot["smoke"] is False
+    # section 2: harness pins, threads of the result files
+    assert "| AgentDojo |" in s2 and "(results/E1/summary.json#timing/0/threads/cpu_count)" in s2
+    malecns = next(ln for ln in s2.splitlines() if ln.startswith("| MaleCNS |")).split(" | ")
+    assert malecns[2] == mr.NA and "(results/setup.json#pins/malecns/version)" in malecns[3]   # a data release: no commit
+    # section 3: window scheme, audit tables, per split/label counts, pools and the FPR point, C_unl composition
+    assert "256 (configs/default.yaml#windows/size)" in s3 and "64 (configs/default.yaml#windows/min_span_chars)" in s3
+    assert "| deep | 355 | 307 | (data/manifests/audit.md) |" in s3 and "| all | 265 | 40.0 % | (data/manifests/audit.md) |" in s3
+    assert "(data/manifests/contamination.json#document_level/deep/test/1/documents)" in s3
+    assert "Рабочая точка TPR" in s3 and "(results/power.json#fpr_target)" in s3
+    splits = json.loads((report_root / "data/manifests/splits.json").read_text(encoding="utf-8"))
+    assert derived["data/c_unl/n"]["value"] == len(splits["c_unl"]) and "#entries/data/c_unl/n/value)" in s3
+    # section 4: ТЗ 1.5 «Сверка» next to the published min / median / max, the pilot, every paraphrase rate row
+    assert "0.127 (results/traces_stats.json#ours/agentdojo/workspace/targeted_asr)" in s4
+    assert "0.100 / 0.250 / 0.400 (моделей 3)" in s4 and "опубликованных прогонов: нет (results/traces_stats.json#same_model_published)" in s4
+    assert derived["traces/published/agentdojo/workspace/targeted_asr"]["value"]["median"] == 0.25
+    assert "(results/pilot.json#candidates/1/targeted_asr)" in s4
+    assert "(results/paraphrases.json#rates/generation_refusal/by_kind/template/rate)" in s4
+    # section 5: the stage-1 table next to the frozen one
+    assert "(results/E0/power_stage1.json#sizes/deep/n_pos)" in s5 and "(results/power.json#sizes/deep/n_pos)" in s5
+    # section 9: contamination counts with derived totals, authorship notes and model cards from the file
+    assert "(data/manifests/contamination.json#document_level/deep/test/1/documents_matched)" in s9
+    assert derived["contamination/deep/test/documents_matched"]["value"] == 4 and derived["contamination/bipia/test/documents"]["value"] == 280
+    assert "share a first author (data/manifests/contamination.json#threats_to_validity/0)" in s9 and "`VMware/open-instruct`" in s9
+    # section 10: runnable on a clean PATH, the final run with --jobs
+    assert ".venv/bin/python scripts/check_acceptance.py" in s10 and "scripts/run_all.sh --jobs 4" in s10 and "scripts/smoke.sh" in s10
+    band = mr.learning_series(mr.Inputs(report_root, False))["knn1"]["shots1"]          # E2 band = min / max over subsamples
+    assert band[1:] == (pytest.approx(0.45), pytest.approx(0.65))
+
+
+def test_smoke_skipped_parts_are_marked(tmp_path):
+    """ASSUMPTIONS A54: guard latency, the guard-heavy E6 parts and the contamination re-audit are marked
+    «не выполнено в смоуке», and the report still traces."""
+    root = tmp_path / "smoke"
+    shutil.copytree(ROOT / "configs", root / "configs")
+    nums = {"auc/deep/protectai_v2": number(None, ci(0.8, 0.05)), "latency_ms/tfidf_lr": number(1.5, n=200)}
+    write_result("E1", 0, nums, {}, {}, [], smoke=True, root=root)
+    write_result("E6", 0, {"auc/deep/real_fly_bloom_k2.5": number(None, ci(0.7, 0.05))}, {}, {}, ["E6 parts: ['k', 'gamma']"],
+                 smoke=True, root=root)
+    atomic_write_json(root / "data/manifests/smoke/contamination.json", {"skipped": True, "note": "smoke profile", "threats_to_validity": ["x"]})
+    text, _ = mr.render(root, smoke=True, figures=False)
+    assert mr.trace_numbers(text, root)[1] == []
+    assert re.search(r"\| protectai_v2 \|[^\n]*не выполнено в смоуке", text)
+    assert re.search(r"\| `bipia_all` \|[^\n]*\| не выполнено в смоуке \|", text) and re.search(r"\| `k` \|[^\n]*\| выполнено \|", text)
+    assert "Пересечение с обучающим набором PIGuard: не выполнено в смоуке" in text
+    parts = [{"part": "k", "status": "выполнено", "flag": "k_frac", "reason": None},      # the table E6 writes itself
+             {"part": "bipia_all", "status": "не выполнено в смоуке", "flag": "bipia_all_attacks_positions", "reason": "not in smoke.e6_parts"}]
+    write_result("E6", 0, {"auc/deep/real_fly_bloom_k2.5": number(None, ci(0.7, 0.05))}, {"parts": parts}, {}, [], smoke=True, root=root)
+    text, _ = mr.render(root, smoke=True, figures=False)
+    assert mr.trace_numbers(text, root)[1] == [] and "(results/smoke/E6/summary.json#tables/parts/1/status)" in text
+    assert re.search(r"\| `bipia_all` \|[^\n]*\| не выполнено в смоуке \(results/smoke/E6/summary.json#tables/parts/1/status\) \|", text)
+
+
+def test_commit_provenance_warnings(tmp_path, monkeypatch):
+    """A52: one line when every result shares one commit; a warning when the code of two commits differs or cannot
+    be compared, when a commit is missing or the code was dirty; no git repository is never a crash."""
+    from types import SimpleNamespace
+
+    inp, a, b = SimpleNamespace(root=tmp_path), "a" * 40, "b" * 40
+    assert "одном коммите" in " ".join(mr.commit_warnings(inp, [a, a], []))
+    for verdict, word in ((True, "отличается"), (None, "не удалось сравнить"), (False, "только вне")):
+        monkeypatch.setattr(mr, "code_differs", lambda root, x, y, v=verdict: v)
+        lines = " ".join(mr.commit_warnings(inp, [a, a, b], []))
+        assert word in lines and (("⚠" in lines) == (verdict is not False))
+    lines = " ".join(mr.commit_warnings(inp, [a, None], ["E1, сиды 3 (results/E1/summary.json#seeds)"]))
+    assert "не записан" in lines and "незакоммиченными" in lines
+    monkeypatch.undo()
+    assert mr.code_differs(tmp_path, a, b) is None
 
 
 def test_acceptance_helpers():
@@ -460,6 +618,9 @@ def test_run_all_driver_fails_the_stage_on_a_failing_command(tmp_path):
     assert rc == 0 and log.rstrip().splitlines()[-2].split("\t")[2:4] == ["e1", "done"]
     rc, calls, log = run("--only", "gen_traces")
     assert rc == 5 and "gen_traces run" in calls and "gen_traces freeze" not in calls
+    for mode in ((), ("--smoke",)):                                    # report: trace_stats first, then make_report
+        rc, calls, log = run(*mode, "--only", "report")
+        assert rc == 0 and calls.index("-m flyguard.gen.trace_stats") < calls.index("scripts/make_report.py")
     rc, calls, log = run("--smoke", "--only", "prescore")                # the cache state is noted at the start
     assert rc == 0 and "\tprescore\tstart\t0\tscores_cache_rows=0" in log
     # the done marker matches windows.parquet; a cache moved aside (0 rows) makes prescore run again

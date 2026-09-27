@@ -169,6 +169,11 @@ def test_e2_curve_numbers_bands_and_h1b_pairs(toy, e2_run):
     assert {r["source"] for r in rb.tables["fewshot_sources"] if r["in_macro"]} == {"deep", "bipia", "dojo", "dyn", "para"}
 
 
+def test_e2_smoke_subsamples(toy_cfg):
+    assert e2.subsamples_per_point(toy_cfg) == toy_cfg.exp("E2")["subsamples_per_point"] == 10
+    assert e2.subsamples_per_point(toy_cfg, smoke=True) == toy_cfg.default["smoke"]["subsamples_per_point"] == 3   # A54
+
+
 def test_e2_shot_levels_parse():
     assert e2.shot_levels([1, "10", "Full"]) == [1, 10, "full"] and [e2.level_key(x) for x in (1, "full")] == ["shots1", "full"]
     with pytest.raises(ValueError):

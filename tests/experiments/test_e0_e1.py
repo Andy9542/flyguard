@@ -96,6 +96,7 @@ def test_e0_stage1_power_json_and_seed_file(toy_cfg, troot, mctx, e0_out):
     assert vr["perm_val_macro_auc"][0] == pytest.approx(vr["val_macro_auc"]["real_fly_bloom"])
     assert len(set(vr["perm_val_macro_auc"])) > 1 and all(0 <= v <= 1 for v in vr["curveball_val_macro_auc"])
     assert p["provenance"]["test_reads"] == mctx.test_sources
+    assert "git_dirty" in p and p["timing"]["threads"]["cpu_count"] and "pools" in p["timing"]["threads"]   # A41/A52
     r = read_result(e0_out["result_path"])
     assert r["stage"] == 1 and r["frozen"] is False and r["timing"]["test_reads"] == mctx.test_sources
     for key in ("size/deep/n_pos", "size/macro/n_clusters", "size/para_deep/n_pos", "pool/p_test", "fpr_target",
@@ -109,6 +110,33 @@ def test_e0_stage1_power_json_and_seed_file(toy_cfg, troot, mctx, e0_out):
     assert len([row for row in r["tables"]["cells"] if row["planning"]]) == len(p["planning_level"])
     assert power_copy_path(1, troot).exists() and summary_path("E0", root=troot).exists()
     assert not any(k.startswith("auc/") for k in r["numbers"])  # E0 never scores a test document
+
+
+def test_e0_perm_fits_are_pinned_to_one_thread(mctx, monkeypatch):
+    """A41: the π-permutation SVD and Bloom fits of E0 run at one BLAS thread like the engine's fits."""
+    from threadpoolctl import threadpool_info
+
+    from flyguard import nose
+    from flyguard.experiments import FeatureContext
+    from flyguard.experiments.e0 import validation_runs
+    from flyguard.readout import BloomReadout
+
+    seen = []
+    for cls in (nose.N51Svd, BloomReadout):
+        monkeypatch.setattr(cls, "fit", lambda self, *a, _o=cls.fit, _c=cls.__name__: seen.append(
+            (_c, frozenset(p["num_threads"] for p in threadpool_info()))) or _o(self, *a))
+    out = validation_runs(FeatureContext(mctx, 0, cache=False), 0, [11, 12])
+    assert len(out["perm_val_macro_auc"]) == 2
+    assert {c for c, _ in seen} == {"N51Svd", "BloomReadout"} and all(t == {1} for _, t in seen)
+
+
+def test_guard_latency_rule(toy_cfg):
+    from flyguard.experiments.e1 import guard_latency_for
+
+    assert guard_latency_for(0, [0, 1], "auto", toy_cfg) and not guard_latency_for(1, [0, 1], "auto", toy_cfg)
+    assert guard_latency_for(1, [0, 1], "always", toy_cfg) and not guard_latency_for(0, [0], "never", toy_cfg)
+    assert toy_cfg.default["smoke"]["guard_latency"] is False                  # A54 smoke profile
+    assert not guard_latency_for(0, [0], "always", toy_cfg, smoke=True) and not guard_latency_for(0, [0], "auto", toy_cfg, smoke=True)
 
 
 # ---------------------------------------------------------------------------------------------- E1
@@ -143,6 +171,8 @@ def test_e1_table_thresholds_and_verdict_inputs(toy_cfg, troot, mctx, e1_paths):
     pts = r["tables"]["roc_points"]
     assert pts and all((p["source"], p["detector"]) in cells and 0 <= p["fpr"] <= 1 for p in pts)
     assert "regex" in {p["detector"] for p in pts}                    # ТЗ 3.1: the regexes are a point on the ROC
+    blooms = [d for d in r["tables"]["detectors"] if d["readout"] == "bloom" and d["available"]]
+    assert blooms and all(d["balanced_n0"] == d["balanced_n1"] > 0 for d in blooms)   # read by check_acceptance.c_bloom
 
 
 def test_roc_vertices_grid_and_points():
@@ -198,7 +228,8 @@ def test_verdicts_from_real_results(toy_cfg, troot, e1_paths):
     assert v["inputs"]["H1b"]["real_fly/fewshot/1"].startswith("E2:") and v["inputs"]["H3"]["primary"].startswith("E4:")
     assert any("E2" in w for w in v["warnings"]) and any("не заморожен" in w for w in v["warnings"])
     assert v["sources"]["power"]["frozen"] is False and v["sources"]["E1"]["seeds"] == [0, 1]
-    top = {k for k, val in v.items() if isinstance(val, dict) and "status" in val}
+    assert "git_commit" in v and "git_dirty" in v and "pools" in v["timing"]["threads"]      # A41/A52 provenance
+    top ={k for k, val in v.items() if isinstance(val, dict) and "status" in val}
     nested = {f"{k}/{s}" for k, val in v.items() if isinstance(val, dict) and "status" not in val
               for s, sv in val.items() if isinstance(sv, dict) and "status" in sv}
     assert top == {"H1a", "H2", "H3"} and nested == {"H1b/real_fly", "H1b/flyhash", "H2_secondary/real_fly_linear"}

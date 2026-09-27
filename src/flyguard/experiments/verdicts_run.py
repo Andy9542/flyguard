@@ -61,7 +61,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from flyguard.config import ROOT, Configs, config_hash, git_commit, load_configs
+from flyguard.config import ROOT, Configs, config_hash, load_configs
 from flyguard.eval.bootstrap import as_ci
 from flyguard.eval.verdicts import (CONFIRMED, INSUFFICIENT, PRECONDITION, REFUTED, Verdict, verdict_h1a,
                                     verdict_h1b, verdict_h2, verdict_h3)
@@ -468,9 +468,13 @@ def build_verdicts(root: Path = ROOT, smoke: bool = False, cfg: Configs | None =
     }
     overview = {"H1a": verdicts["H1a"]["status"], "H1b": {v: verdicts["H1b"][v]["status"] for v in H1B_VARIANTS},
                 "H2": verdicts["H2"]["status"], "H3": verdicts["H3"]["status"]}
+    # provenance (ASSUMPTIONS A41/A52): git_commit / git_dirty at the top level, the thread counts under
+    # timing.threads -- where make_report section 2 and check_acceptance.code_provenance read them
+    prov = results_mod.provenance(root)
     return {
         **verdicts,
-        "created_at": _stamp(), "config_hash": current, "git_commit": git_commit(root), "smoke": bool(smoke),
+        "created_at": _stamp(), "config_hash": current, "git_commit": prov["git_commit"],
+        "git_dirty": prov["git_dirty"], "timing": {"threads": prov["threads"]}, "smoke": bool(smoke),
         "seeds": seeds, "excluded_seeds": excluded, "aggregate_rule": AGGREGATE_RULE, "comparator": comparator,
         "overview": overview,
         "power_config_hash": power.get("config_hash"), "power_frozen": bool(power.get("frozen")),

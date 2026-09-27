@@ -8,11 +8,14 @@ The design wording puts both under ``results/<E>/``; they are separated because 
 whose ``<seed>.json`` exists with the current ``config_hash`` (design §9), and a smoke file with the same hash
 would silently make the real seed 0 be skipped. ``results/power.json`` / ``results/smoke/power.json`` follow the
 same rule (:func:`power_path`). Every file is written through :func:`flyguard.io.atomic_write_json` (sorted keys,
-NaN -> null) and carries ``config_hash`` (:func:`flyguard.config.config_hash`) and ``git_commit``.
+NaN -> null) and carries ``config_hash`` (:func:`flyguard.config.config_hash`), ``git_commit`` and ``git_dirty``
+(ASSUMPTIONS A52: :func:`provenance` is the one helper every JSON writer -- seed files, ``power.json``,
+``contract.json``, ``verdicts.json`` -- takes these fields and ``timing.threads`` from).
 
 Result file (one per experiment and global seed)::
 
-    {"experiment": "E1", "seed": 0, "config_hash": "...", "git_commit": "...", "seeds": {children}, "smoke": false,
+    {"experiment": "E1", "seed": 0, "config_hash": "...", "git_commit": "...", "git_dirty": false,
+     "seeds": {children}, "smoke": false,
      "created_at": "...Z", "timing": {..., "threads": {env, cpu_count, pools}}, "numbers": {key: number},
      "tables": {name: [row dicts]},
      "thresholds": {name: {value, source, target, n, ...}}, "notes": [str]}
@@ -56,11 +59,16 @@ Per number key: ``mean``, ``sd`` (ddof 1, ``None`` for one seed), ``min``, ``max
 a mean of percentile bounds is not an interval of anything. Tables are concatenated with a ``seed`` column,
 thresholds and notes are kept per seed. ``config_hash`` is the common hash of the seed files; mismatching hashes
 are recorded under ``config_hashes`` and flagged in ``warnings`` so that the report cannot mix runs of two configs.
+``git_commits`` / ``git_dirty`` hold the code provenance per seed; seed files computed on different commits, or with
+uncommitted changes in ``src/``, ``scripts/`` or ``configs/``, are flagged in ``warnings`` as well (A52: a commit
+that touches only journals or docs is the same code, which ``check_acceptance`` decides with ``git diff``; the
+summary only reports that the commits differ).
 """
 from __future__ import annotations
 
 import math
 import os
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -119,6 +127,33 @@ def thread_info() -> dict[str, Any]:
     except Exception:  # noqa: BLE001 - provenance only; never fail a result write over it
         pools = []
     return {"env": {k: os.environ.get(k) for k in THREAD_ENV}, "cpu_count": os.cpu_count(), "pools": pools}
+
+
+CODE_PATHS = ("src", "scripts", "configs")
+"""The trees whose uncommitted changes make a result's ``git_commit`` an incomplete description of its code (A52)."""
+
+
+def git_dirty(root: Path = ROOT, paths: Sequence[str] = CODE_PATHS) -> bool | None:
+    """True when ``git status --porcelain -- src scripts configs`` lists anything (modified, staged or untracked
+    files under the code trees), False when it lists nothing, None when ``root`` is not a git checkout or git is
+    missing (test roots): a result computed on a dirty tree is not reproducible from its ``git_commit`` alone."""
+    try:
+        # --no-optional-locks: ten seed processes of ``run_all.sh --jobs`` may write at once; a plain ``git status``
+        # refreshes the index under .git/index.lock and a lost race would record git_dirty as unknown
+        out = subprocess.run(["git", "--no-optional-locks", "status", "--porcelain", "--", *paths], cwd=Path(root),
+                             check=True, capture_output=True, text=True).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError, NotADirectoryError, OSError):
+        return None
+    return bool(out.strip())
+
+
+def provenance(root: Path = ROOT) -> dict[str, Any]:
+    """``{git_commit, git_dirty, threads}`` for any results JSON writer (ASSUMPTIONS A41/A52).
+
+    ``git_commit`` / ``git_dirty`` go to the top level of the file (``make_report`` section 2 and
+    ``check_acceptance`` read them there), ``threads`` to ``timing.threads``. ``verdicts_run`` and every other writer
+    outside :func:`write_result` should call this instead of assembling the fields itself."""
+    return {"git_commit": git_commit(Path(root)), "git_dirty": git_dirty(Path(root)), "threads": thread_info()}
 
 
 def _finite(x: Any) -> float | None:
@@ -181,9 +216,10 @@ def write_result(experiment: str, seed: int, numbers: Mapping[str, Any], tables:
     """Write ``results/<E>/<seed>.json`` (design §9 format) atomically; returns the path.
 
     ``numbers`` values may be plain floats (wrapped by :func:`number`) or number dicts; keys are validated.
-    ``config_hash`` and ``git_commit`` are taken at write time from the repository at ``root``; ``timing`` gains
-    ``threads`` (:func:`thread_info`) unless the caller already recorded it.
+    ``config_hash``, ``git_commit`` and ``git_dirty`` are taken at write time from the repository at ``root``
+    (:func:`provenance`); ``timing`` gains ``threads`` (:func:`thread_info`) unless the caller already recorded it.
     """
+    prov = provenance(Path(root))
     nums: dict[str, Any] = {}
     for key, val in numbers.items():
         check_key(key)
@@ -192,8 +228,9 @@ def write_result(experiment: str, seed: int, numbers: Mapping[str, Any], tables:
             nums[key].setdefault(k, None)
     payload: dict[str, Any] = {
         "experiment": str(experiment), "seed": int(seed), "config_hash": config_hash(Path(root)),
-        "git_commit": git_commit(Path(root)), "seeds": dict(seeds or {}), "smoke": bool(smoke),
-        "created_at": _stamp(), "timing": {"threads": thread_info(), **dict(timing or {})}, "numbers": nums,
+        "git_commit": prov["git_commit"], "git_dirty": prov["git_dirty"], "seeds": dict(seeds or {}),
+        "smoke": bool(smoke), "created_at": _stamp(), "timing": {"threads": prov["threads"], **dict(timing or {})},
+        "numbers": nums,
         "tables": {str(k): [dict(r) for r in v] for k, v in tables.items()},
         "thresholds": {str(k): (dict(v) if isinstance(v, Mapping) else v) for k, v in thresholds.items()},
         "notes": [str(n) for n in notes],
@@ -285,6 +322,14 @@ def summarize(experiment: str, smoke: bool = False, root: Path = ROOT, write: bo
     current = config_hash(Path(root))
     if distinct and distinct != [current]:
         warnings.append("config_hash of the seed files differs from the current configs")
+    commits = {s: r.get("git_commit") for s, r in runs.items()}
+    if len({c for c in commits.values() if c is not None}) > 1:
+        warnings.append(f"git_commit differs between seed files: {commits} (A52: the same code only if "
+                        f"`git diff --quiet A B -- src scripts configs` holds)")
+    dirty = {s: r.get("git_dirty") for s, r in runs.items()}
+    if any(v is True for v in dirty.values()):
+        warnings.append(f"seed files computed with uncommitted changes in src/scripts/configs (git_dirty): "
+                        f"{sorted(s for s, v in dirty.items() if v is True)}")
     tables: dict[str, list[dict[str, Any]]] = {}
     for s in sorted(runs):
         for name, rows in (runs[s].get("tables") or {}).items():
@@ -296,6 +341,7 @@ def summarize(experiment: str, smoke: bool = False, root: Path = ROOT, write: bo
         "config_hashes": {str(s): h for s, h in hashes.items()},
         "config_hash_current": current,
         "git_commits": {str(s): r.get("git_commit") for s, r in runs.items()},
+        "git_dirty": {str(s): r.get("git_dirty") for s, r in runs.items()},
         "child_seeds": {str(s): r.get("seeds") for s, r in runs.items()},
         "numbers": summarize_numbers({s: r.get("numbers") or {} for s, r in runs.items()}),
         "tables": tables,

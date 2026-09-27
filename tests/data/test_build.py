@@ -105,6 +105,11 @@ def test_smoke_subset_respects_caps_and_clusters(cfg, raw_root, recorder, monkey
     docs = res["documents"]
     processed, manifests = build.output_dirs(raw_root, True)
     assert processed.name == "smoke" and manifests.name == "smoke" and (manifests / "splits.json").exists()
+    c = json.load(open(manifests / "contamination.json"))          # A54: the audit is not repeated in smoke
+    assert small["contamination_audit"] is False and c["skipped"] is True and c["smoke"] is True
+    assert "smoke.contamination_audit" in c["note"] and not [r for r in recorder.calls if r[1] == "external"]
+    assert "пропущено" in (manifests / "audit.md").read_text(encoding="utf-8")
+    assert build.smoke_contamination_audit(type("C", (), {"default": {"smoke": {"contamination_audit": True}}})())
     full = build.build_all(cfg, without_traces=True, smoke=False, root=raw_root, access_log=recorder, write=False)
     fdocs = full["documents"]
     strata = lambda d: d["split"] + "/" + d["meta"].map(lambda m: m.get("task", ""))      # noqa: E731
